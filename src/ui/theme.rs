@@ -1,6 +1,8 @@
 //! 色、フォント、角丸。
 
-use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Visuals};
+use egui::{
+    Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, FontTweak, Visuals,
+};
 use std::sync::Arc;
 
 use crate::eew::report::{LgClass, Shindo};
@@ -113,6 +115,9 @@ pub fn mplus_medium_font(size: f32) -> FontId {
 }
 
 /// アイコン (Lucide)。文字は `lucide_icons::Icon::unicode` で得る。
+/// Lucide は文字の高さの中央より上に描かれるので、フォントサイズに比例して下へずらす。
+const ICON_Y_OFFSET_FACTOR: f32 = 0.1;
+
 pub fn icon_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("icons".into()))
 }
@@ -159,7 +164,17 @@ pub fn install(ctx: &egui::Context) {
         "mplus-medium",
         include_bytes!("../../assets/fonts/MPLUS1p-Medium.ttf"),
     );
-    add(&mut fonts, "lucide", lucide_icons::LUCIDE_FONT_BYTES);
+    // Lucide のグリフは em ボックスの中央に描かれているが、行の高さとの関係で
+    // 描画すると約 0.09em 上にずれる。フォントごと下へ補正して中央に揃える。
+    fonts.font_data.insert(
+        "lucide".into(),
+        Arc::new(
+            FontData::from_static(lucide_icons::LUCIDE_FONT_BYTES).tweak(FontTweak {
+                y_offset_factor: ICON_Y_OFFSET_FACTOR,
+                ..Default::default()
+            }),
+        ),
+    );
 
     let fallback: Vec<String> = fonts.families[&FontFamily::Proportional].clone();
     let with = |first: &str| {
