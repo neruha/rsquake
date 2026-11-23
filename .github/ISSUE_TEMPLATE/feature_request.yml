@@ -1,0 +1,46 @@
+name: 要望・提案
+description: こんな機能がほしい、こうなると使いやすい、というアイデアを伝えます
+title: "【要望】"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        アイデアを教えていただきありがとうございます。実現の方法まで考える必要はありません。「困っていること」と「こうなってほしいこと」を、ふだんの言葉で書いてください。
+        ご要望のすべてに応えられるとは限りませんが、一つひとつ読んで検討します。
+  - type: textarea
+    id: problem
+    attributes:
+      label: いま困っていること、不便なこと
+      description: どんな場面で、何が不便ですか。
+      placeholder: "例: 通知機能がないので、地震があったことに気づかないことがある。"
+  - type: textarea
+    id: wish
+    attributes:
+      label: どうなってほしいですか
+      description: 理想の姿を自由に書いてください。他のアプリの画面などを例に挙げても構いません。
+      placeholder: "例: 通知機能をつけてほしい。"
+    validations:
+      required: true
+  - type: dropdown
+    id: importance
+    attributes:
+      label: どのくらい困っていますか
+      options:
+        - あれば便利、くらいの気持ち
+        - ないと少し困る
+        - ないと使い続けにくい
+  - type: dropdown
+    id: os
+    attributes:
+      label: 使っているパソコン
+      options:
+        - Windows
+        - Mac (Apple Silicon、M1 / M2 / M3 などのチップ)
+        - Mac (Intel)
+        - わからない
+  - type: textarea
+    id: images
+    attributes:
+      label: 参考になる画像(あれば)
+      description: イメージを伝える画像や、ほかのアプリの画面があれば、ここにドラッグして貼り付けてください。

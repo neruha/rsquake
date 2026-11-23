@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 最新版をダウンロードする
+    url: https://github.com/neruha/rsquake/releases
+    about: 古いバージョンを使っているときは、最新版で直っていることがあります。先にお試しください。

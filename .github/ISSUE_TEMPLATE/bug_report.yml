@@ -1,0 +1,101 @@
+name: 不具合の報告
+description: 思った通りに動かない、おかしな表示が出る、などの問題を知らせます
+title: "【不具合】"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ご報告ありがとうございます。専門的な知識は必要ありません。わかる範囲で、思いつくままに書いてください。
+        すべての欄を埋めなくても大丈夫です。「必須」と書いてある欄だけでも助かります。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 何が起きましたか
+      description: 困っていることを、そのままの言葉で書いてください。
+      placeholder: |
+        例: 地図の動きがカクカクする。
+        例: 緊急地震速報が出ているのに、音が鳴らなかった。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 本来はどうなってほしいですか
+      description: 「こうなると思っていた」という動きがあれば書いてください。わからなければ空欄で大丈夫です。
+      placeholder: "例: 地図がなめらかに動いてほしい。"
+  - type: textarea
+    id: steps
+    attributes:
+      label: そうなる前に、何をしましたか
+      description: 操作の順番がわかると、こちらで同じ状況を再現しやすくなります。覚えていなければ「わからない」で構いません。
+      placeholder: |
+        1. アプリを起動した
+        2. 設定を開いて「自動でズームする」をオンにした
+        3. 地図を見ていたら、カクカクしはじめた
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: どのくらいの頻度で起きますか
+      options:
+        - 毎回起きる
+        - ときどき起きる
+        - 1回だけ起きた
+        - わからない
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 使っているパソコン
+      options:
+        - Windows
+        - Mac (Apple Silicon、M1 / M2 / M3 などのチップ)
+        - Mac (Intel)
+        - わからない
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: RSQuake のバージョン
+      description: アプリの設定画面を開くと、左下に「RSQuake 0.2.0」のように書いてあります。その数字を書いてください。わからなければ「わからない」で構いません。
+      placeholder: "例: 0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: pc-spec
+    attributes:
+      label: パソコンの種類(わかれば)
+      description: 「Ryzen 7 7730U」のような CPU の名前や、メーカーと機種名などです。わからなければ空欄で大丈夫です。
+      placeholder: "例: ノートPC、CPU は Ryzen 7 7730U"
+  - type: dropdown
+    id: install-type
+    attributes:
+      label: どの形式で入れましたか
+      description: ダウンロードしたファイルの種類です。わからなければ「わからない」を選んでください。
+      options:
+        - インストーラー (.msi)
+        - ポータブル版 (.zip)
+        - Mac 用 (.dmg)
+        - ソースコードから自分でビルドした
+        - わからない
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 画面の写真やスクリーンショット
+      description: |
+        おかしな画面があれば、ここに画像をドラッグして貼り付けてください。エラーのメッセージが出たときは、その画面が一番の手がかりになります。
+        ファイルをこの欄へドラッグするだけで貼り付けられます。
+  - type: textarea
+    id: other
+    attributes:
+      label: そのほか気づいたこと
+      description: 「最近アップデートしてから」「ほかのソフトを同時に使っているときだけ」など、気づいたことがあれば自由に書いてください。
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 送る前の確認
+      options:
+        - label: 住所、氏名、メールアドレスなどの個人情報が、書いた内容や画像に写っていないことを確認しました
+          required: true
