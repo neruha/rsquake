@@ -1,0 +1,16 @@
+Sound credits
+
+eew_forecast.mp3 (EEW forecast sound)
+  "Notification" by IENBA
+  https://freesound.org/s/545495/
+  License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+  https://creativecommons.org/licenses/by/4.0/
+  Changes: The original sound was edited (modified) for use in this software.
+
+eew_warn.mp3 (EEW warning sound)
+  "Text Message" by LoudKevin
+  https://freesound.org/s/761464/
+  License: Creative Commons 0 (CC0 1.0 Universal)
+  https://creativecommons.org/publicdomain/zero/1.0/
+  Changes: The original sound was edited (modified) for use in this software.
+  Attribution is not required under CC0; it is given as a courtesy.

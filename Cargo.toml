@@ -1,0 +1,55 @@
+[package]
+name = "rsquake"
+version = "0.1.0"
+edition = "2024"
+
+# srev: SREV リプレイ (src/dev/srev.rs などが手元にあるときだけ `--features srev` で有効にする)
+[features]
+srev = []
+
+[dependencies]
+anyhow = "1.0.104"
+chrono = { version = "0.4.45", features = ["serde"] }
+directories = "6.0.0"
+earcutr = "0.5.0"
+eframe = "0.37"
+egui = "0.37"
+futures-util = "0.3.34"
+gif = { version = "0.14", default-features = false, features = ["std"] }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+# 設定画面などのアイコン。同梱の lucide.ttf をフォントとして読み込む (ui::theme)
+lucide-icons = "1.77.0"
+reqwest = { version = "0.13", default-features = false }
+# tokio-tungstenite の wss 用。暗号プロバイダを自分で選ぶ必要がある (net::ws で install する)
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "mp3"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["rt", "macros", "time", "sync", "net"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+toml = "1.2.1"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# デバッグビルドでも egui / epaint のテッセレーションが遅くならないよう、依存クレートだけ最適化する。
+[profile.dev.package."*"]
+opt-level = 2
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util", "rt", "macros", "time"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+# リリースビルド: 配布用に小さく速くする (コンソールを出さない設定は main.rs)。
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# winit 0.30.13 は Windows でドラッグ中の WM_DPICHANGED を誤って処理し、
+# DPI の違うモニタをまたぐ移動がガクつく。vendor/winit は 0.30.13 に
+# その修正 (event_loop.rs の "rsquake patch") だけを当てたもの。
+# winit 側が修正版をリリースしたら、この節と vendor/winit を消す。
+[patch.crates-io]
+winit = { path = "vendor/winit" }
