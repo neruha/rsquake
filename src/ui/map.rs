@@ -29,6 +29,38 @@ struct RegionShape {
 const SETTLE_SECS: f64 = 0.15;
 /// キャッシュとの縮尺比がこの範囲を出たら、待たずに作り直す。
 const MAX_STRETCH: f32 = 2.0;
+/// 境界線の点を間引くときの最小間隔 (物理ピクセル)。これより近い点は描いても見分けがつかない。
+const LINE_MIN_STEP_PX: f32 = 1.0;
+
+/// 直前に残した点から `min_step` 未満の点を飛ばす。始点と終点は必ず残すので、
+/// 隣の arc とのつなぎ目はずれない。閉じた線 (島の輪郭) が 3 点以下に潰れるときは
+/// 島ごと消えてしまうので、間引かずに返す。小さな島の点数は少ないので負担にならない。
+fn thin_points(pts: Vec<Pos2>, min_step: f32) -> Vec<Pos2> {
+    if pts.len() <= 2 {
+        return pts;
+    }
+    let first = pts[0];
+    let last = pts[pts.len() - 1];
+    let min_sq = min_step * min_step;
+    let mut out = Vec::with_capacity(pts.len());
+    out.push(first);
+    let mut kept = first;
+    for &p in &pts[1..pts.len() - 1] {
+        if (p - kept).length_sq() >= min_sq {
+            out.push(p);
+            kept = p;
+        }
+    }
+    // 終点のすぐ手前に残した点があると、ごく短い線分ができる。終点を優先して外す。
+    if out.len() > 1 && (last - kept).length_sq() < min_sq {
+        out.pop();
+    }
+    out.push(last);
+    if first == last && out.len() < 4 {
+        return pts;
+    }
+    out
+}
 
 const FILL: usize = 0;
 /// S 波バーの高さ (ポイント)
@@ -485,12 +517,13 @@ impl MapView {
         let cull = rect.expand2(rect.size() * 0.5);
         let mut lines = |arcs: &[Vec<[f64; 2]>], stroke: Stroke| {
             let mut mesh = Mesh::default();
+            let min_step = LINE_MIN_STEP_PX / ppp;
             for arc in arcs {
                 let pts: Vec<Pos2> = arc.iter().map(|m| view.to_screen(rect, *m)).collect();
                 if !Rect::from_points(&pts).intersects(cull) {
                     continue;
                 }
-                let path = PathShape::line(pts, PathStroke::from(stroke));
+                let path = PathShape::line(thin_points(pts, min_step), PathStroke::from(stroke));
                 tess.tessellate_path(&path, &mut mesh);
             }
             mesh
@@ -844,5 +877,47 @@ mod tests {
         c.apply(rect, v);
         let want = v.to_screen(rect, m);
         assert!((c.shown[FILL].vertices[0].pos - want).length() < 0.05);
+    }
+
+    #[test]
+    fn thin_points_keeps_ends_and_drops_close_points() {
+        let pts = vec![
+            pos2(0.0, 0.0),
+            pos2(0.3, 0.0),
+            pos2(0.6, 0.0),
+            pos2(1.2, 0.0),
+            pos2(1.5, 0.0),
+            pos2(1.8, 0.0),
+            pos2(5.0, 0.0),
+        ];
+        let out = thin_points(pts.clone(), 1.0);
+        assert_eq!(out.first(), pts.first());
+        assert_eq!(out.last(), pts.last());
+        assert_eq!(out, vec![pos2(0.0, 0.0), pos2(1.2, 0.0), pos2(5.0, 0.0)]);
+    }
+
+    #[test]
+    fn thin_points_collapses_tiny_arc_to_its_ends() {
+        let pts = vec![
+            pos2(0.0, 0.0),
+            pos2(0.2, 0.0),
+            pos2(0.4, 0.0),
+            pos2(0.5, 0.0),
+        ];
+        assert_eq!(thin_points(pts, 1.0), vec![pos2(0.0, 0.0), pos2(0.5, 0.0)]);
+        let two = vec![pos2(0.0, 0.0), pos2(0.1, 0.0)];
+        assert_eq!(thin_points(two.clone(), 1.0), two);
+    }
+
+    #[test]
+    fn thin_points_keeps_tiny_closed_ring() {
+        let ring = vec![
+            pos2(0.0, 0.0),
+            pos2(0.3, 0.0),
+            pos2(0.3, 0.3),
+            pos2(0.0, 0.3),
+            pos2(0.0, 0.0),
+        ];
+        assert_eq!(thin_points(ring.clone(), 1.0), ring);
     }
 }
