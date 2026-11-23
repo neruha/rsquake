@@ -1,7 +1,10 @@
-# Builds the Windows package (dist/RSQuake-<version>-windows-x64.zip).
+# Builds the Windows packages:
+#   dist/RSQuake-<version>-windows-x64.zip
+#   dist/RSQuake-<version>-windows-x64-installer.msi   (needs the WiX CLI: dotnet tool install --global wix --version 5.0.2)
 #   powershell -File scripts/package-windows.ps1
 # Pass -SkipBuild if the release build already exists.
-param([switch]$SkipBuild)
+# Pass -SkipMsi to build only the zip.
+param([switch]$SkipBuild, [switch]$SkipMsi)
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -23,3 +26,21 @@ $zip = Join-Path $root "dist\$name.zip"
 if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -Path $stage -DestinationPath $zip
 Write-Host "created $zip"
+
+if (-not $SkipMsi) {
+    if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
+        throw "wix not found. Install it with: dotnet tool install --global wix --version 5.0.2 (or pass -SkipMsi)"
+    }
+    # MSI versions must be numeric (major.minor.build); drop any pre-release suffix.
+    $msiVersion = ($version -split '[-+]')[0]
+    $msi = Join-Path $root "dist\$name-installer.msi"
+    if (Test-Path $msi) { Remove-Item -LiteralPath $msi -Force }
+    wix build wix\main.wxs `
+        -arch x64 `
+        -d "Version=$msiVersion" `
+        -d "ExePath=$(Join-Path $stage 'RSQuake.exe')" `
+        -d "IconPath=$(Join-Path $root 'assets\icon\icon.ico')" `
+        -o $msi
+    if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
+    Write-Host "created $msi"
+}

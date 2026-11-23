@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- RSQuake Windows installer (WiX v5). Built by scripts/package-windows.ps1. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="RSQuake"
+           Manufacturer="RSQuake"
+           Version="$(Version)"
+           UpgradeCode="8C32F39B-AC31-4F2D-921B-171A7CA17B16"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <!-- 新しい版を上書きインストールすると古い版を自動で置き換える -->
+    <MajorUpgrade DowngradeErrorMessage="新しいバージョンの RSQuake が既にインストールされています。" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="$(IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="RSQuake" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="*">
+        <Shortcut Id="AppShortcut"
+                  Name="RSQuake"
+                  Target="[INSTALLFOLDER]RSQuake.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon.ico" />
+        <RegistryValue Root="HKCU" Key="Software\RSQuake" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="*">
+        <File Id="RSQuakeExe" Source="$(ExePath)" Name="RSQuake.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="RSQuake" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>
