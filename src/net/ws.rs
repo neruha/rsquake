@@ -166,8 +166,8 @@ async fn run(
     alive: Arc<Mutex<bool>>,
     wake: Arc<Notify>,
 ) {
-    // wss 用。すでに入っていれば Err が返るだけ
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    // wss 用
+    super::install_tls_provider();
 
     // 生きているかの確認と送信を同じロックの中で行う。止められたあとは何も送らない
     let send = |e: NetEvent| {
@@ -245,6 +245,7 @@ pub fn parse_health(body: &str) -> Option<Upstream> {
 /// `every` ごとに `/health` を見て、上流の状態を送る。止まらない (呼び出し側が打ち切る)。
 /// 取れなかったときは何も送らない (WebSocket 側の切断は別に検知する)。
 async fn health_loop(url: String, every: Duration, send: &impl Fn(NetEvent) -> bool) {
+    super::install_tls_provider();
     let client = match reqwest::Client::builder()
         .timeout(HEALTH_TIMEOUT)
         .connect_timeout(HEALTH_TIMEOUT)

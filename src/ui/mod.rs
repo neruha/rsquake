@@ -7,4 +7,5 @@ pub mod scale_icons;
 pub mod settings;
 pub mod status;
 pub mod theme;
+pub mod update_popup;
 pub mod widgets;

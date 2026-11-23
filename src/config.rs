@@ -27,6 +27,33 @@ pub struct Config {
     pub location: Option<Location>,
     pub sound: SoundConfig,
     pub eew: EewConfig,
+    pub update: UpdateConfig,
+}
+
+/// 新しいバージョンの確認 (GitHub Releases)。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct UpdateConfig {
+    /// 起動時に確認する
+    pub check: bool,
+    /// プレリリースも新版として扱う
+    pub include_prerelease: bool,
+    /// 通知をスキップしたバージョン (これと同じ版は、起動時にポップアップを出さない)
+    pub skipped_version: Option<String>,
+    /// 案内を済ませたバージョン。いまの版と違えば、起動時にリリースノート (GitHub) へ案内する。
+    /// 新規インストール (設定ファイルが無い) のときは、いまの版を入れて案内しない。
+    pub last_notes_version: Option<String>,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            check: true,
+            include_prerelease: false,
+            skipped_version: None,
+            last_notes_version: None,
+        }
+    }
 }
 
 /// EEW をどこから受け取るか。同時には使わない。
@@ -160,6 +187,7 @@ impl Default for Config {
             location: None,
             sound: SoundConfig::default(),
             eew: EewConfig::default(),
+            update: UpdateConfig::default(),
         }
     }
 }
@@ -212,7 +240,9 @@ impl Config {
                 Self::default()
             }),
             Err(_) => {
-                let c = Self::default();
+                let mut c = Self::default();
+                // 新規インストールには、リリースノートを案内しない
+                c.update.last_notes_version = Some(env!("CARGO_PKG_VERSION").into());
                 if let Err(e) = c.save() {
                     tracing::warn!("設定を保存できない: {e}");
                 }
@@ -309,6 +339,23 @@ mod tests {
             "ws://example:3000/ws?name=rsquake&v=2&topics=eew"
         );
         assert_eq!(c.wolfx, WolfxConfig::default());
+    }
+
+    #[test]
+    fn update_settings_default_on_and_old_config_still_loads() {
+        let c: Config = toml::from_str("test_mode = true\n").unwrap();
+        assert_eq!(c.update, UpdateConfig::default());
+        assert!(c.update.check);
+        assert!(!c.update.include_prerelease);
+        let c: Config =
+            toml::from_str("[update]\ninclude_prerelease = true\nskipped_version = \"0.3.0\"\n")
+                .unwrap();
+        assert!(c.update.check);
+        assert!(c.update.include_prerelease);
+        assert_eq!(c.update.skipped_version.as_deref(), Some("0.3.0"));
+        // 保存して読み直しても変わらない
+        let back: Config = toml::from_str(&toml::to_string_pretty(&c).unwrap()).unwrap();
+        assert_eq!(back.update, c.update);
     }
 
     #[test]

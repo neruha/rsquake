@@ -24,6 +24,7 @@ use crate::eew::report::Upstream;
 use crate::net::LinkState;
 use crate::sound::{SoundCue, SoundPlayer};
 use crate::ui::theme;
+use crate::update::{self, Phase, UpdateInfo};
 
 /// 設定画面の大きさ。アプリの窓が小さいときは、それに合わせて縮める。
 const WINDOW_SIZE: egui::Vec2 = vec2(820.0, 580.0);
@@ -79,15 +80,17 @@ enum Tab {
     Display,
     Location,
     Sound,
+    Update,
     License,
 }
 
 impl Tab {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Connection,
         Self::Display,
         Self::Location,
         Self::Sound,
+        Self::Update,
         Self::License,
     ];
 
@@ -97,6 +100,7 @@ impl Tab {
             Self::Display => "表示",
             Self::Location => "指定地点",
             Self::Sound => "効果音",
+            Self::Update => "アップデート",
             Self::License => "ライセンス",
         }
     }
@@ -107,6 +111,7 @@ impl Tab {
             Self::Display => Icon::Monitor,
             Self::Location => Icon::MapPin,
             Self::Sound => Icon::Volume2,
+            Self::Update => Icon::RefreshCw,
             Self::License => Icon::ScrollText,
         }
     }
@@ -121,9 +126,18 @@ pub struct LinkInfo {
     pub replay: bool,
 }
 
+/// アップデートのページに出す、確認の状態。
+#[derive(Clone, Copy)]
+pub struct UpdateView<'a> {
+    pub info: &'a UpdateInfo,
+    pub current: &'a semver::Version,
+}
+
 #[derive(Default)]
 pub struct SettingsWindow {
     pub open: bool,
+    /// 「今すぐ確認」が押された。呼び出し側が確認を始めて、false に戻す
+    pub request_check: bool,
     tab: Tab,
     /// 全文を開いているクレジットの添字
     opened_license: Option<usize>,
@@ -168,6 +182,7 @@ impl SettingsWindow {
         config: &mut Config,
         sound: &mut SoundPlayer,
         link: LinkInfo,
+        update: UpdateView<'_>,
     ) -> bool {
         if !self.open {
             // 閉じたら編集中の文字は捨てる (次に開いたとき設定から作り直す)
@@ -245,6 +260,14 @@ impl SettingsWindow {
                                     Tab::Display => changed |= display_page(ui, config),
                                     Tab::Location => changed |= location_page(ui, config, &mut buf),
                                     Tab::Sound => changed |= sound_page(ui, config, sound),
+                                    Tab::Update => {
+                                        changed |= update_page(
+                                            ui,
+                                            config,
+                                            update,
+                                            &mut self.request_check,
+                                        );
+                                    }
                                     Tab::License => self.license_page(ui),
                                 });
                             });
@@ -633,6 +656,108 @@ fn sound_page(ui: &mut Ui, config: &mut Config, sound: &mut SoundPlayer) -> bool
                 sound.preview(cue, &config.sound);
             }
         }
+    });
+    changed
+}
+
+/// アップデートの設定と、確認の状態。ダウンロードとリリースノートは GitHub のページで見てもらう。
+fn update_page(
+    ui: &mut Ui,
+    config: &mut Config,
+    view: UpdateView<'_>,
+    request_check: &mut bool,
+) -> bool {
+    let mut changed = false;
+
+    section(
+        ui,
+        "確認",
+        "新しい版があれば、起動時にポップアップで知らせます。EEW が出ている間は出しません。",
+        |rows| {
+            changed |= rows.toggle_row(
+                "起動時に新しい版を確認",
+                "GitHub Releases に問い合わせます。確認だけで、自動ではインストールしません。",
+                &mut config.update.check,
+            );
+            changed |= rows.toggle_row(
+                "プレリリースを含める",
+                "ベータ版などのプレリリースも、新しい版として扱います。",
+                &mut config.update.include_prerelease,
+            );
+        },
+    );
+
+    section(ui, "状態", "", |rows| {
+        let checking = view.info.phase == Phase::Checking;
+        let latest = view.info.result.latest.as_ref();
+        let (icon, color, text) = match (&view.info.phase, latest) {
+            (Phase::Checking, _) => (
+                Icon::RefreshCw,
+                theme::TEXT_MUTED,
+                "確認しています".to_string(),
+            ),
+            (Phase::Failed, _) => (
+                Icon::TriangleAlert,
+                theme::WARNING,
+                "確認できませんでした。ネットワークを確認してください。".to_string(),
+            ),
+            (Phase::Done, Some(r)) => (
+                Icon::Download,
+                theme::FORECAST,
+                format!("新しいバージョン v{} が公開されています", r.version),
+            ),
+            (Phase::Done, None) => (
+                Icon::Check,
+                theme::OK,
+                format!("最新です (v{})", view.current),
+            ),
+            (Phase::Idle, _) => (
+                Icon::Info,
+                theme::TEXT_MUTED,
+                if config.update.check {
+                    format!("まだ確認していません (v{})", view.current)
+                } else {
+                    format!("起動時の確認はオフです (v{})", view.current)
+                },
+            ),
+        };
+        rows.status_row(icon, color, &text, 120.0, |ui| {
+            if ui
+                .add_enabled(!checking, icon_text_button(Icon::RefreshCw, "今すぐ確認"))
+                .clicked()
+            {
+                *request_check = true;
+            }
+        });
+        if let Some(r) = latest {
+            rows.row(
+                "ダウンロード",
+                "GitHub の Release のページが開きます。",
+                140.0,
+                |ui| {
+                    if ui
+                        .add(icon_text_button(Icon::ExternalLink, "GitHub で開く"))
+                        .clicked()
+                    {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(&r.url));
+                    }
+                },
+            );
+        }
+        rows.row(
+            "リリースノート",
+            "変更点は GitHub の Release のページに書かれています。",
+            140.0,
+            |ui| {
+                if ui
+                    .add(icon_text_button(Icon::ExternalLink, "GitHub で開く"))
+                    .clicked()
+                {
+                    ui.ctx()
+                        .open_url(egui::OpenUrl::new_tab(update::RELEASES_PAGE));
+                }
+            },
+        );
     });
     changed
 }

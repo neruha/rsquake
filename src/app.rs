@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -21,9 +21,11 @@ use crate::net::ws::WsSupervisor;
 use crate::net::{LinkState, NetEvent};
 use crate::sound::SoundPlayer;
 use crate::ui::map::{MapEvent, MapView, Overlays, StationLayer};
-use crate::ui::settings::{LinkInfo, SettingsWindow};
+use crate::ui::settings::{LinkInfo, SettingsWindow, UpdateView};
 use crate::ui::status::{KmoniStatus, Status};
+use crate::ui::update_popup::{PopupAction, UpdatePopup};
 use crate::ui::{arrival_panel, info_panel, intensity_panel, status, theme};
+use crate::update::{self, CheckOptions, Phase, UpdateEvent, UpdateInfo};
 
 /// この間、新しい画像が取れなければ、時刻を赤にして古い画像であることを示す。
 const KMONI_STALE: chrono::Duration = chrono::Duration::seconds(5);
@@ -86,6 +88,20 @@ pub struct EewApp {
     clock: Option<SimClock>,
     /// EEW の受信スレッド。リプレイ中は無い。受信元を変えたらつなぎ直す
     ws: Option<WsSupervisor>,
+    update: Updater,
+}
+
+/// 新しい版の確認と、その通知。リプレイ中は何もしない。
+struct Updater {
+    /// 確認と通知をするか (リプレイ・時計を合わせた再生では無効)
+    enabled: bool,
+    current: semver::Version,
+    tx: Sender<UpdateEvent>,
+    rx: Receiver<UpdateEvent>,
+    info: UpdateInfo,
+    /// 起動時の通知をまだ決めていない。確認の結果 (または失敗) が届いたときに決める
+    notice_pending: bool,
+    popup: Option<UpdatePopup>,
 }
 
 impl EewApp {
@@ -101,6 +117,20 @@ impl EewApp {
         ws: Option<WsSupervisor>,
     ) -> Self {
         theme::install(&cc.egui_ctx);
+        let (update_tx, update_rx) = channel();
+        let update_enabled = !replay && clock.is_none();
+        let mut update = Updater {
+            enabled: update_enabled,
+            current: update::current_version(),
+            tx: update_tx,
+            rx: update_rx,
+            info: UpdateInfo::default(),
+            notice_pending: update_enabled,
+            popup: None,
+        };
+        if update_enabled && config.update.check {
+            update.start_check(&config, &cc.egui_ctx);
+        }
         let topo = Topo::parse(include_bytes!("../assets/geojson/eew-prefregion.json"))
             .expect("同梱の地図が読めない");
         let map = MapView::new(&topo);
@@ -127,6 +157,7 @@ impl EewApp {
             sound: SoundPlayer::new(),
             clock,
             ws,
+            update,
         }
     }
 
@@ -178,12 +209,71 @@ impl EewApp {
         }
         self.store.prune(now);
     }
+
+    /// 更新の確認の結果を受け取り、起動時の通知を出すか決める。
+    /// 通知は EEW が出ている間は出さず、出ている通知は EEW が出たらすぐ閉じる。
+    fn update_step(&mut self, eew_active: bool) {
+        while let Ok(ev) = self.update.rx.try_recv() {
+            match ev {
+                UpdateEvent::Checked(r) => {
+                    self.update.info = UpdateInfo {
+                        phase: Phase::Done,
+                        result: r,
+                    };
+                }
+                UpdateEvent::Failed(why) => {
+                    tracing::info!("更新を確認できない: {why}");
+                    self.update.info.phase = Phase::Failed;
+                }
+            }
+        }
+        if eew_active {
+            self.update.popup = None;
+        }
+        // 起動時の通知: 確認が終わった (確認しないときは最初の 1 フレーム) ところで 1 回だけ決める
+        if self.update.notice_pending && self.update.info.phase != Phase::Checking {
+            self.update.notice_pending = false;
+            let result =
+                (self.update.info.phase == Phase::Done).then_some(&self.update.info.result);
+            let notice = update::choose_notice(
+                result,
+                &self.config.update,
+                &self.update.current,
+                eew_active,
+            );
+            if let Some(notice) = notice {
+                // 版が上がった案内は、出したときに見せた版として残す (出せなかったら次の起動でもう一度)
+                if matches!(notice, update::Notice::Upgraded(_)) {
+                    self.config.update.last_notes_version = Some(self.update.current.to_string());
+                    self.save_config();
+                }
+                self.update.popup = Some(UpdatePopup::new(notice, self.update.current.clone()));
+            }
+        }
+    }
+
+    fn save_config(&self) {
+        if let Err(e) = self.config.save() {
+            tracing::warn!("設定を保存できない: {e}");
+        }
+    }
+}
+
+impl Updater {
+    fn start_check(&mut self, config: &Config, ctx: &egui::Context) {
+        self.info.phase = Phase::Checking;
+        let mut opts = CheckOptions::new(config.update.include_prerelease);
+        opts.current = self.current.clone();
+        update::spawn(opts, self.tx.clone(), ctx.clone());
+    }
 }
 
 impl eframe::App for EewApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.drain();
         let now = self.now();
+        let eew_now = self.store.active(now).iter().any(|e| !e.is_canceled());
+        self.update_step(eew_now);
         let active = self.store.active(now);
         // 右のパネルに出す 1 イベント。一定間隔で切り替える
         let interval = switch_interval(self.config.eew.switch_interval_secs);
@@ -272,6 +362,25 @@ impl eframe::App for EewApp {
             self.settings.open = !self.settings.open;
         }
 
+        // 更新の通知 (地図の右下)
+        if let Some(popup) = self.update.popup.as_mut() {
+            match popup.show(ui.ctx(), map_rect) {
+                PopupAction::None => {}
+                PopupAction::Close => self.update.popup = None,
+                PopupAction::Open(url) => {
+                    if update::is_release_url(&url) {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                    }
+                    self.update.popup = None;
+                }
+                PopupAction::Skip(version) => {
+                    self.config.update.skipped_version = Some(version.to_string());
+                    self.save_config();
+                    self.update.popup = None;
+                }
+            }
+        }
+
         // 右パネル: 情報 / 予想 / 震度
         let info_h = info_panel::height_for(side.width()).min(side.height() * 0.6);
         let info = Rect::from_min_size(side.min, vec2(side.width(), info_h));
@@ -297,10 +406,24 @@ impl eframe::App for EewApp {
             upstream: self.upstream,
             replay: self.ws.is_none(),
         };
-        if self
-            .settings
-            .show(ui.ctx(), &mut self.config, &mut self.sound, link)
+        let update_view = UpdateView {
+            info: &self.update.info,
+            current: &self.update.current,
+        };
+        let settings_changed = self.settings.show(
+            ui.ctx(),
+            &mut self.config,
+            &mut self.sound,
+            link,
+            update_view,
+        );
+        if std::mem::take(&mut self.settings.request_check)
+            && self.update.enabled
+            && self.update.info.phase != Phase::Checking
         {
+            self.update.start_check(&self.config, ui.ctx());
+        }
+        if settings_changed {
             if let Err(e) = self.config.save() {
                 tracing::warn!("設定を保存できない: {e}");
             }

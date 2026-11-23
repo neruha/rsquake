@@ -8,3 +8,4 @@ pub mod geo;
 pub mod net;
 pub mod sound;
 pub mod ui;
+pub mod update;

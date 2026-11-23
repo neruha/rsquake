@@ -193,6 +193,7 @@ pub struct HttpSource {
 
 impl HttpSource {
     pub fn new(base: &str) -> anyhow::Result<Self> {
+        super::install_tls_provider();
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .connect_timeout(REQUEST_TIMEOUT)

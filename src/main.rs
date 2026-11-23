@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use rsquake::app::EewApp;
-use rsquake::config::Config;
+use rsquake::config::{Config, EewSource};
 use rsquake::dev::replay::{self, ReplayOptions};
 #[cfg(feature = "srev")]
 use rsquake::dev::srev;
@@ -19,6 +19,8 @@ struct Args {
     replay: Vec<PathBuf>,
     interval_ms: Option<u64>,
     no_kmoni: bool,
+    /// `--source dmdata|wolfx`。このセッションだけ EEW の受信元を替える (設定ファイルは書き換えない)
+    source: Option<EewSource>,
     kmoni_record: Option<PathBuf>,
     kmoni_replay: Option<PathBuf>,
     #[cfg(feature = "srev")]
@@ -35,6 +37,7 @@ fn parse_args() -> Args {
         replay: Vec::new(),
         interval_ms: None,
         no_kmoni: false,
+        source: None,
         kmoni_record: None,
         kmoni_replay: None,
         #[cfg(feature = "srev")]
@@ -49,6 +52,16 @@ fn parse_args() -> Args {
         match a.as_str() {
             "--test" => args.test = true,
             "--no-kmoni" => args.no_kmoni = true,
+            "--source" => {
+                args.source = match it.next().as_deref() {
+                    Some("dmdata") => Some(EewSource::Dmdata),
+                    Some("wolfx") => Some(EewSource::Wolfx),
+                    other => {
+                        eprintln!("--source は dmdata か wolfx: {other:?}");
+                        None
+                    }
+                }
+            }
             "--replay" => args.replay.extend(it.next().map(PathBuf::from)),
             "--interval" => args.interval_ms = it.next().and_then(|v| v.parse().ok()),
             "--kmoni-record" => args.kmoni_record = it.next().map(PathBuf::from),
@@ -81,6 +94,11 @@ fn main() -> eframe::Result {
 
     let args = parse_args();
     let mut config = Config::load();
+    if let Some(source) = args.source
+        && source.selectable()
+    {
+        config.source = source;
+    }
     if args.test {
         config.force_test_mode();
     }
