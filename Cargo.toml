@@ -1,7 +1,12 @@
 [package]
 name = "rsquake"
 version = "0.1.1"
+authors = ["neruha <neruha@neru.me>"]
 edition = "2024"
+
+license = "GPL-3.0-only"
+repository = "https://github.com/neruha/rsquake"
+readme = "README.md"
 
 # srev: SREV リプレイ (src/dev/srev.rs などが手元にあるときだけ `--features srev` で有効にする)
 [features]
