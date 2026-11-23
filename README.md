@@ -22,6 +22,8 @@
 | macOS (Apple Silicon) | `RSQuake-<バージョン>-macos-arm64.dmg` |
 | macOS (Intel) | `RSQuake-<バージョン>-macos-x86_64.dmg` |
 
+Windows (x64) インストーラーを実行する際に「VCRUNTIME140.dllが見つかりません」と表示された場合は、[**Microsoft Visual C++ 再頒布可能パッケージ**](https://learn.microsoft.com/ja-jp/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version)をインストールしてください。
+
 Windows と macOS の配布物には正式な署名がありません。起動時に警告が出たときは、次のように起動してください。
 
 - Windows: 警告の「詳細情報」から実行します。
