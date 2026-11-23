@@ -31,3 +31,6 @@ rustc-ice-*.txt
 /docs
 .DS_Store
 /scripts/test-e2e.ts
+
+# yomiyasu スキル
+/.agents/skills/yomiyasu/
