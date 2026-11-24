@@ -1,6 +1,6 @@
 [package]
 name = "rsquake"
-version = "0.2.0-pre.1"
+version = "0.2.0-pre.2"
 authors = ["neruha <neruha@neru.me>"]
 edition = "2024"
 
@@ -56,6 +56,10 @@ opt-level = 2
 [dev-dependencies]
 tempfile = "3.27.0"
 tokio = { version = "1", features = ["test-util", "rt", "macros", "time"] }
+
+# 常駐用のトレイ。配布している Windows と macOS だけで使う (src/resident/tray.rs)
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+tray-icon = { version = "0.26", default-features = false }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

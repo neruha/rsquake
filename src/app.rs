@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use egui::{Color32, Rect, Ui, pos2, vec2};
@@ -23,6 +23,8 @@ use crate::geo::travel_time::TravelTimeTable;
 use crate::net::kmoni::KmoniEvent;
 use crate::net::ws::WsSupervisor;
 use crate::net::{LinkState, NetEvent};
+use crate::resident::tray::{self, Tray, TrayAction};
+use crate::resident::{AutoShow, Behavior, WindowState, wants_show};
 use crate::sound::SoundPlayer;
 use crate::ui::map::{MapEvent, MapView, Overlays, StationLayer};
 use crate::ui::settings::{LinkInfo, SettingsWindow, UpdateView};
@@ -38,6 +40,12 @@ const KMONI_STALE: chrono::Duration = chrono::Duration::seconds(5);
 /// EEW 表示中の再描画間隔の範囲。動きが速いほど短くする。
 const EEW_REPAINT_MIN: Duration = Duration::from_millis(33);
 const EEW_REPAINT_MAX: Duration = Duration::from_millis(200);
+/// EEW でウィンドウを最前面に出したあと、通常の重なり順に戻すまでの時間。
+/// Windows はほかのアプリが前面にあるとフォーカスを奪えないので、一度だけ最前面にする。
+const RAISE_HOLD: Duration = Duration::from_millis(500);
+/// 隠れている間や、自動表示を戻すのを待つ間に `logic` を起こす間隔
+const BACKGROUND_TICK: Duration = Duration::from_millis(500);
+
 /// 1 回の再描画で、予報円などが動いてよい画面上の距離 (ポイント)
 const EEW_STEP_PX: f32 = 0.5;
 
@@ -94,6 +102,20 @@ pub struct EewApp {
     /// EEW の受信スレッド。リプレイ中は無い。受信元を変えたらつなぎ直す
     ws: Option<WsSupervisor>,
     update: Updater,
+    /// ゲームモード。常駐と EEW での自動表示を止める。保存せず、起動のたびにオフ
+    game_mode: bool,
+    /// トレイ。常駐の設定がオンで、この OS で作れたときだけある
+    tray: Option<Tray>,
+    /// 自動で表示したウィンドウを元に戻すための記憶
+    auto_show: AutoShow,
+    /// 閉じるボタンで隠して、まだ戻していない
+    hidden: bool,
+    /// トレイの「終了」から終わらせている (閉じるボタンの隠す処理を飛ばす)
+    quitting: bool,
+    /// EEW でウィンドウを表示する依頼 (次の `logic` で処理する)
+    show_pending: bool,
+    /// 最前面にしたウィンドウを通常の重なり順に戻す時刻
+    lower_at: Option<Instant>,
     /// デバッグメニュー (デバッグビルドだけ)
     #[cfg(debug_assertions)]
     debug: DebugMenu,
@@ -161,6 +183,9 @@ impl EewApp {
         let topo = Topo::parse(include_bytes!("../assets/geojson/eew-prefregion.json"))
             .expect("同梱の地図が読めない");
         let map = MapView::new(&topo);
+        let tray = (config.window.resident && tray::SUPPORTED)
+            .then(|| Tray::new(&cc.egui_ctx, false))
+            .flatten();
         Self {
             // 時計を合わせて再生するときは、電文の時刻が今に合っているので補正しない
             store: EventStore::new((config.test_mode || replay) && clock.is_none()),
@@ -185,9 +210,21 @@ impl EewApp {
             clock,
             ws,
             update,
+            game_mode: false,
+            tray,
+            auto_show: AutoShow::default(),
+            hidden: false,
+            quitting: false,
+            show_pending: false,
+            lower_at: None,
             #[cfg(debug_assertions)]
             debug: DebugMenu::default(),
         }
+    }
+
+    /// いま効いている常駐と自動表示の動作。
+    fn behavior(&self) -> Behavior {
+        Behavior::new(&self.config.window, self.game_mode, self.tray.is_some())
     }
 
     fn now(&self) -> DateTime<Utc> {
@@ -233,6 +270,14 @@ impl EewApp {
         let is_warning = r.is_warning;
         let outcome = self.store.apply(r, now);
         self.sound.on_eew(&outcome, is_warning, &self.config.sound);
+        if wants_show(
+            &self.behavior(),
+            &self.config.window.popup,
+            &outcome,
+            is_warning,
+        ) {
+            self.show_pending = true;
+        }
         self.display.notify(&id, &outcome);
         match outcome {
             ApplyOutcome::Rejected(why) => {
@@ -307,7 +352,129 @@ impl EewApp {
             }
         }
         if self.update.quit {
+            // 更新の適用で終了するときは、常駐でもウィンドウを隠さず終わる
+            self.quitting = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    /// 設定に合わせて、トレイを作る・消す。メインスレッドの `logic` から呼ぶ。
+    fn sync_tray(&mut self, ctx: &egui::Context) {
+        let want = self.config.window.resident && tray::SUPPORTED;
+        if want && self.tray.is_none() {
+            self.tray = Tray::new(ctx, self.game_mode);
+        } else if !want {
+            self.tray = None;
+        }
+        if let Some(t) = self.tray.as_mut() {
+            t.set_game_mode(self.game_mode);
+        }
+    }
+
+    fn window_state(&self, ctx: &egui::Context) -> WindowState {
+        if self.hidden {
+            WindowState::Hidden
+        } else if ctx.input(|i| i.viewport().minimized) == Some(true) {
+            WindowState::Minimized
+        } else {
+            WindowState::Shown
+        }
+    }
+
+    /// ウィンドウを前に出す。`raise` なら、一度だけ最前面にしてフォーカスを求める。
+    fn show_window(&mut self, ctx: &egui::Context, raise: bool) {
+        use egui::{ViewportCommand, WindowLevel};
+        if self.hidden {
+            ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+            self.hidden = false;
+        }
+        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+        if raise {
+            ctx.send_viewport_cmd(ViewportCommand::WindowLevel(WindowLevel::AlwaysOnTop));
+            self.lower_at = Some(Instant::now() + RAISE_HOLD);
+        }
+        ctx.request_repaint();
+    }
+
+    fn handle_tray(&mut self, ctx: &egui::Context) {
+        let actions = self.tray.as_ref().map(Tray::poll).unwrap_or_default();
+        for action in actions {
+            match action {
+                TrayAction::Show => {
+                    self.auto_show.cancel();
+                    self.show_window(ctx, false);
+                }
+                TrayAction::Settings => {
+                    self.auto_show.cancel();
+                    self.settings.open_behavior();
+                    self.show_window(ctx, false);
+                }
+                TrayAction::ToggleGameMode => self.game_mode = !self.game_mode,
+                TrayAction::Quit => {
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+    }
+
+    /// 閉じるボタン。常駐が効いているなら終了せず隠す。
+    fn handle_close(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.quitting
+            && self.behavior().hide_on_close
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.hidden = true;
+            self.auto_show.cancel();
+        }
+    }
+
+    /// EEW でのウィンドウ表示と、終了後に元へ戻す処理。
+    fn auto_show_step(&mut self, ctx: &egui::Context, eew_active: bool) {
+        use egui::ViewportCommand;
+        if self.game_mode {
+            self.auto_show.cancel();
+            self.show_pending = false;
+        }
+        if std::mem::take(&mut self.show_pending) {
+            let before = self.window_state(ctx);
+            self.auto_show.on_show(before);
+            self.show_window(ctx, true);
+        }
+        if let Some(at) = self.lower_at
+            && Instant::now() >= at
+        {
+            ctx.send_viewport_cmd(ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+            self.lower_at = None;
+        }
+        if !eew_active
+            && self.auto_show.pending()
+            && let Some(state) = self
+                .auto_show
+                .on_eew_ended(self.config.window.popup.hide_after)
+        {
+            match state {
+                WindowState::Hidden => {
+                    ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+                    self.hidden = true;
+                }
+                WindowState::Minimized => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+                WindowState::Shown => {}
+            }
+        }
+        // トレイが無いのに隠れたままだと戻せない
+        if self.hidden && self.tray.is_none() {
+            self.show_window(ctx, false);
+        }
+        // 隠れている間も、期限切れや元に戻す時刻に気づけるよう起こす
+        if self.hidden || self.auto_show.pending() {
+            ctx.request_repaint_after(BACKGROUND_TICK);
+        }
+        if let Some(at) = self.lower_at {
+            ctx.request_repaint_after(at.saturating_duration_since(Instant::now()));
         }
     }
 
@@ -462,11 +629,32 @@ impl Updater {
 }
 
 impl eframe::App for EewApp {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    /// ウィンドウが隠れていても呼ばれる。受信の取り込みなど、止めてはいけない処理はここに置く。
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.sync_tray(ctx);
         self.drain();
         let now = self.now();
         let eew_now = self.store.active(now).iter().any(|e| !e.is_canceled());
-        self.update_step(ui.ctx(), eew_now);
+        self.update_step(ctx, eew_now);
+        self.handle_tray(ctx);
+        self.handle_close(ctx);
+        self.auto_show_step(ctx, eew_now);
+    }
+
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        // ウィンドウ内の操作があったら、自動表示したウィンドウは元に戻さない
+        if ui.ctx().input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::PointerButton { pressed: true, .. }
+                        | egui::Event::Key { pressed: true, .. }
+                )
+            })
+        }) {
+            self.auto_show.cancel();
+        }
+        let now = self.now();
         let active = self.store.active(now);
         // 右のパネルに出す 1 イベント。一定間隔で切り替える
         let interval = switch_interval(self.config.eew.switch_interval_secs);
@@ -533,6 +721,7 @@ impl eframe::App for EewApp {
                 test_mode: self.config.test_mode,
                 replay: self.replay || self.clock.is_some(),
                 debug_events: self.has_debug_events(&active),
+                game_mode: self.game_mode,
                 kmoni: kmoni_status,
             },
         );
@@ -614,6 +803,7 @@ impl eframe::App for EewApp {
             ui.ctx(),
             &mut self.config,
             &mut self.sound,
+            &mut self.game_mode,
             link,
             update_view,
         );
@@ -649,6 +839,10 @@ impl eframe::App for EewApp {
 
         #[cfg(debug_assertions)]
         self.debug_step(ui.ctx(), now);
+        // デバッグメニューや設定から出た表示の依頼を、次の `logic` で処理する
+        if self.show_pending {
+            ui.ctx().request_repaint();
+        }
 
         // 再描画: EEW 表示中は予報円が動く速さに合わせる (時計のために毎秒は必ず描く)。
         // 平常時は時計のために毎秒。
