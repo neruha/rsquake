@@ -66,13 +66,21 @@ winresource = "0.1"
 
 # リリースビルド: 配布用に小さく速くする (コンソールを出さない設定は main.rs)。
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 strip = true
+opt-level = 3
 
 # winit 0.30.13 は Windows でドラッグ中の WM_DPICHANGED を誤って処理し、
 # DPI の違うモニタをまたぐ移動がガクつく。vendor/winit は 0.30.13 に
 # その修正 (event_loop.rs の "rsquake patch") だけを当てたもの。
 # winit 側が修正版をリリースしたら、この節と vendor/winit を消す。
+#
+# wgpu-hal 30.0.2 は、Vulkan のディスクリプタプールを poolSizeCount == 0 で作る。
+# 古い Intel のドライバ (第 6〜10 世代の UHD など、igvk64.dll) はここで落ちて、
+# 起動直後にアクセス違反 (0xc0000005) になる (#14)。vendor/wgpu-hal は 30.0.2 に
+# gfx-rs/wgpu#10124 の修正 (descriptor.rs の "rsquake patch") だけを当てたもの。
+# 修正を含む wgpu-hal がリリースされたら、この節と vendor/wgpu-hal を消す。
 [patch.crates-io]
 winit = { path = "vendor/winit" }
+wgpu-hal = { path = "vendor/wgpu-hal" }
