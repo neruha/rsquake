@@ -5,18 +5,34 @@
            Manufacturer="RSQuake"
            Version="$(Version)"
            UpgradeCode="8C32F39B-AC31-4F2D-921B-171A7CA17B16"
-           Scope="perMachine"
+           Scope="perUser"
            Compressed="yes">
 
-    <!-- 新しい版を上書きインストールすると古い版を自動で置き換える -->
+    <!-- ユーザー単位のインストール (%LOCALAPPDATA%\Programs\RSQuake)。管理者権限が要らないので、
+         アプリ内の更新 (msiexec /passive) で UAC が出ない。 -->
+
+    <!-- 新しい版を上書きインストールすると古い版を自動で置き換える。
+         perMachine だった古い版 (Program Files) は MajorUpgrade の対象にならないので、
+         下の LaunchCondition で検出して、アンインストールを案内する。 -->
     <MajorUpgrade DowngradeErrorMessage="新しいバージョンの RSQuake が既にインストールされています。" />
+
+    <!-- 古い (perMachine) インストーラー版が残っていたら、先にアンインストールしてもらう -->
+    <Property Id="OLDMACHINEINSTALL">
+      <DirectorySearch Id="OldInstallDir" Path="[ProgramFiles64Folder]RSQuake" Depth="0">
+        <FileSearch Id="OldInstallExe" Name="RSQuake.exe" />
+      </DirectorySearch>
+    </Property>
+    <Launch Condition="OLDMACHINEINSTALL = &quot;&quot; OR Installed"
+            Message="古いバージョンの RSQuake が Program Files に入っています。「設定 > アプリ」から RSQuake をアンインストールしてから、もう一度このインストーラーを実行してください。" />
     <MediaTemplate EmbedCab="yes" />
 
     <Icon Id="AppIcon.ico" SourceFile="$(IconPath)" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
 
-    <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="RSQuake" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="RSQuake" />
+      </Directory>
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
@@ -32,7 +48,11 @@
 
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
       <Component Id="MainExecutable" Guid="*">
-        <File Id="RSQuakeExe" Source="$(ExePath)" Name="RSQuake.exe" KeyPath="yes" />
+        <File Id="RSQuakeExe" Source="$(ExePath)" Name="RSQuake.exe" />
+        <!-- ユーザー単位のインストールでは、KeyPath はファイルではなく HKCU のレジストリ値にする (ICE38) -->
+        <RegistryValue Root="HKCU" Key="Software\RSQuake" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+        <!-- アンインストールで、インストールフォルダごと消す (更新で残った古いファイルも含む) -->
+        <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
       </Component>
     </ComponentGroup>
 

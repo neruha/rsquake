@@ -72,6 +72,9 @@ pub struct UpdateConfig {
     pub check: bool,
     /// プレリリースも新版として扱う
     pub include_prerelease: bool,
+    /// 新しい版を見つけたら、確認せずにダウンロードして適用する。
+    /// スキップした版は適用しない。EEW が出ている間は、終わるまで適用を待つ
+    pub auto_apply: bool,
     /// 通知をスキップしたバージョン (これと同じ版は、起動時にポップアップを出さない)
     pub skipped_version: Option<String>,
     /// 案内を済ませたバージョン。いまの版と違えば、起動時にリリースノート (GitHub) へ案内する。
@@ -84,6 +87,7 @@ impl Default for UpdateConfig {
         Self {
             check: true,
             include_prerelease: false,
+            auto_apply: false,
             skipped_version: None,
             last_notes_version: None,
         }
@@ -394,6 +398,7 @@ mod tests {
         assert_eq!(c.update, UpdateConfig::default());
         assert!(c.update.check);
         assert!(!c.update.include_prerelease);
+        assert!(!c.update.auto_apply);
         let c: Config =
             toml::from_str("[update]\ninclude_prerelease = true\nskipped_version = \"0.3.0\"\n")
                 .unwrap();

@@ -27,11 +27,18 @@ if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -Path $stage -DestinationPath $zip
 Write-Host "created $zip"
 
+# MSI のバージョンは数字だけなので、v0.2.0-pre.1 と v0.2.0 が同じ 0.2.0 になって
+# アップグレードできなくなる。プレリリース (version に - を含む) は MSI を作らず zip だけにする。
+if (-not $SkipMsi -and $version.Contains('-')) {
+    Write-Host "pre-release ${version}: skipping MSI"
+    $SkipMsi = $true
+}
+
 if (-not $SkipMsi) {
     if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
         throw "wix not found. Install it with: dotnet tool install --global wix --version 5.0.2 (or pass -SkipMsi)"
     }
-    # MSI versions must be numeric (major.minor.build); drop any pre-release suffix.
+    # MSI versions must be numeric (major.minor.build).
     $msiVersion = ($version -split '[-+]')[0]
     $msi = Join-Path $root "dist\$name-installer.msi"
     if (Test-Path $msi) { Remove-Item -LiteralPath $msi -Force }

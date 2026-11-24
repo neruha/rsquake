@@ -142,6 +142,10 @@ pub struct SettingsWindow {
     pub open: bool,
     /// 「今すぐ確認」が押された。呼び出し側が確認を始めて、false に戻す
     pub request_check: bool,
+    /// 「更新する」が押された。呼び出し側がダウンロードを始めて、false に戻す
+    pub request_install: bool,
+    /// 「再起動して更新」が押された。呼び出し側が適用して、false に戻す
+    pub request_apply: bool,
     tab: Tab,
     /// 全文を開いているクレジットの添字
     opened_license: Option<usize>,
@@ -273,7 +277,11 @@ impl SettingsWindow {
                                             ui,
                                             config,
                                             update,
-                                            &mut self.request_check,
+                                            UpdateRequests {
+                                                check: &mut self.request_check,
+                                                install: &mut self.request_install,
+                                                apply: &mut self.request_apply,
+                                            },
                                         );
                                     }
                                     Tab::License => self.license_page(ui),
@@ -727,12 +735,34 @@ fn behavior_page(ui: &mut Ui, config: &mut Config, game_mode: &mut bool) -> bool
     changed
 }
 
-/// アップデートの設定と、確認の状態。ダウンロードとリリースノートは GitHub のページで見てもらう。
+/// アップデートのページで押されたボタン。
+struct UpdateRequests<'a> {
+    check: &'a mut bool,
+    install: &'a mut bool,
+    apply: &'a mut bool,
+}
+
+/// ダウンロードの進行状況の文。
+fn progress_text(done: u64, total: u64) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    if total > 0 {
+        format!(
+            "ダウンロードしています ({:.1} / {:.1} MB)",
+            done as f64 / MB,
+            total as f64 / MB
+        )
+    } else {
+        format!("ダウンロードしています ({:.1} MB)", done as f64 / MB)
+    }
+}
+
+/// アップデートの設定と、確認・更新の状態。
+/// アプリ内で更新できない環境では、ダウンロードとリリースノートは GitHub のページで見てもらう。
 fn update_page(
     ui: &mut Ui,
     config: &mut Config,
     view: UpdateView<'_>,
-    request_check: &mut bool,
+    mut req: UpdateRequests<'_>,
 ) -> bool {
     let mut changed = false;
 
@@ -743,13 +773,18 @@ fn update_page(
         |rows| {
             changed |= rows.toggle_row(
                 "起動時に新しい版を確認",
-                "GitHub Releases に問い合わせます。確認だけで、自動ではインストールしません。",
+                "GitHub Releases に問い合わせます。",
                 &mut config.update.check,
             );
             changed |= rows.toggle_row(
                 "プレリリースを含める",
                 "ベータ版などのプレリリースも、新しい版として扱います。",
                 &mut config.update.include_prerelease,
+            );
+            changed |= rows.toggle_row(
+                "自動で更新",
+                "新しい版を見つけたら、確認せずにダウンロードして更新します。EEW が出ている間は、終わるまで再起動を待ちます。",
+                &mut config.update.auto_apply,
             );
         },
     );
@@ -793,23 +828,11 @@ fn update_page(
                 .add_enabled(!checking, icon_text_button(Icon::RefreshCw, "今すぐ確認"))
                 .clicked()
             {
-                *request_check = true;
+                *req.check = true;
             }
         });
         if let Some(r) = latest {
-            rows.row(
-                "ダウンロード",
-                "GitHub の Release のページが開きます。",
-                140.0,
-                |ui| {
-                    if ui
-                        .add(icon_text_button(Icon::ExternalLink, "GitHub で開く"))
-                        .clicked()
-                    {
-                        ui.ctx().open_url(egui::OpenUrl::new_tab(&r.url));
-                    }
-                },
-            );
+            update_rows(rows, r, &view, &mut req);
         }
         rows.row(
             "リリースノート",
@@ -827,6 +850,141 @@ fn update_page(
         );
     });
     changed
+}
+
+/// 新しい版があるときの、更新の行。アプリ内で更新できるときは、進み具合とボタンを出す。
+fn update_rows(
+    rows: &mut Rows<'_>,
+    r: &update::Release,
+    view: &UpdateView<'_>,
+    req: &mut UpdateRequests<'_>,
+) {
+    use update::Install;
+    let open_github = |rows: &mut Rows<'_>, desc: &str| {
+        rows.row("ダウンロード", desc, 140.0, |ui| {
+            if ui
+                .add(icon_text_button(Icon::ExternalLink, "GitHub で開く"))
+                .clicked()
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(&r.url));
+            }
+        });
+    };
+    match &view.info.plan {
+        Some(Ok(_)) => {}
+        Some(Err(why)) => {
+            // アプリ内では更新できない。理由を出して、GitHub のページへ案内する
+            open_github(rows, &format!("このアプリでは自動で更新できません。{why}"));
+            return;
+        }
+        None => {
+            open_github(rows, "GitHub の Release のページが開きます。");
+            return;
+        }
+    }
+    match &view.info.install {
+        Install::None => {
+            rows.row(
+                "更新",
+                "ダウンロードして、署名を確かめてから更新します。",
+                140.0,
+                |ui| {
+                    if ui
+                        .add(icon_text_button(Icon::Download, "更新する"))
+                        .clicked()
+                    {
+                        *req.install = true;
+                    }
+                },
+            );
+        }
+        Install::Downloading { done, total } => {
+            rows.status_row(
+                Icon::Download,
+                theme::FORECAST,
+                &progress_text(*done, *total),
+                0.0,
+                |_| {},
+            );
+            let frac = if *total > 0 {
+                *done as f32 / *total as f32
+            } else {
+                0.0
+            };
+            rows.progress_row(frac);
+        }
+        Install::Verifying => {
+            rows.status_row(
+                Icon::RefreshCw,
+                theme::TEXT_MUTED,
+                "署名とハッシュを確認しています",
+                0.0,
+                |_| {},
+            );
+        }
+        Install::Ready => {
+            rows.row(
+                "更新",
+                "確認が済みました。再起動して、新しい版にします。",
+                170.0,
+                |ui| {
+                    if ui
+                        .add(icon_text_button(Icon::RotateCw, "再起動して更新"))
+                        .clicked()
+                    {
+                        *req.apply = true;
+                    }
+                },
+            );
+        }
+        Install::WaitingForEew => {
+            rows.status_row(
+                Icon::Clock,
+                theme::WARNING,
+                "緊急地震速報が終わったら更新します",
+                0.0,
+                |_| {},
+            );
+        }
+        Install::Applying => {
+            rows.status_row(
+                Icon::RotateCw,
+                theme::TEXT_MUTED,
+                "更新しています。まもなく再起動します",
+                0.0,
+                |_| {},
+            );
+        }
+        Install::Failed(why) => {
+            rows.status_row(
+                Icon::TriangleAlert,
+                theme::WARNING,
+                &format!("更新できませんでした。{why}"),
+                140.0,
+                |ui| {
+                    if ui
+                        .add(icon_text_button(Icon::ExternalLink, "GitHub で開く"))
+                        .clicked()
+                    {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(&r.url));
+                    }
+                },
+            );
+            rows.row(
+                "更新",
+                "もう一度ダウンロードします。",
+                140.0,
+                |ui| {
+                    if ui
+                        .add(icon_text_button(Icon::Download, "やり直す"))
+                        .clicked()
+                    {
+                        *req.install = true;
+                    }
+                },
+            );
+        }
+    }
 }
 
 fn flag(cfg: &mut SoundConfig, cue: SoundCue) -> &mut bool {
@@ -1207,6 +1365,25 @@ impl Rows<'_> {
     }
 
     /// アイコンと文で状態を出し、右に部品 (幅 `control_w`) を置く行。
+    /// 進み具合のバーだけの行。
+    fn progress_row(&mut self, fraction: f32) {
+        self.divider();
+        let ui = &mut *self.ui;
+        let width = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(vec2(width, 22.0), Sense::hover());
+        let bar = Rect::from_min_max(
+            pos2(rect.min.x + ROW_PAD.x, rect.center().y - 2.0),
+            pos2(rect.max.x - ROW_PAD.x, rect.center().y + 2.0),
+        );
+        let p = ui.painter();
+        p.rect_filled(bar, 2.0, DIVIDER);
+        let fill = Rect::from_min_size(
+            bar.min,
+            vec2(bar.width() * fraction.clamp(0.0, 1.0), bar.height()),
+        );
+        p.rect_filled(fill, 2.0, theme::ACCENT);
+    }
+
     fn status_row<R>(
         &mut self,
         icon: Icon,

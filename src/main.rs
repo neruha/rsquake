@@ -85,6 +85,12 @@ fn fail(msg: &str) -> ! {
 }
 
 fn main() -> eframe::Result {
+    // 更新の適用役として起動されたときは、画面を出さずに入れ替えだけして終わる
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = rsquake::update::apply::run_from_args(&raw_args) {
+        std::process::exit(code);
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

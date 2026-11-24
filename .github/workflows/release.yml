@@ -74,12 +74,28 @@ jobs:
           merge-multiple: true
       - name: Checksums
         run: cd artifacts && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      # アプリ内の更新は、この署名を埋め込んだ公開鍵 (src/update/verify.rs) で確かめてから入れ替える。
+      # 秘密鍵は secret MINISIGN_SECRET_KEY (鍵ファイルの中身)。パスワード無しで作った鍵を使う。
+      - name: Sign checksums (minisign)
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -z "${MINISIGN_SECRET_KEY}" ]; then
+            echo "::error::secret MINISIGN_SECRET_KEY がありません"
+            exit 1
+          fi
+          curl -fsSL -o minisign.tar.gz https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+          tar xzf minisign.tar.gz
+          printf '%s\n' "${MINISIGN_SECRET_KEY}" > "${RUNNER_TEMP}/minisign.key"
+          ./minisign-linux/x86_64/minisign -S -s "${RUNNER_TEMP}/minisign.key" -m artifacts/SHA256SUMS -x artifacts/SHA256SUMS.minisig -c "RSQuake ${GITHUB_REF_NAME}" < /dev/null
+          rm -f "${RUNNER_TEMP}/minisign.key"
+          ./minisign-linux/x86_64/minisign -V -P "RWRBln5NwYcW1hoogap/HJk+sLfxlI4AosFEC0u69cf+42jXpLzstaIO" -m artifacts/SHA256SUMS -x artifacts/SHA256SUMS.minisig
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           # 下書きで作る。内容を確認してから GitHub 上で公開する
           draft: true
-          # v0.3.0-beta.1 のように - を含むタグはプレリリース
+          # v0.3.0-pre.1 のように - を含むタグはプレリリース
           prerelease: ${{ contains(github.ref_name, '-') }}
           # リリースノートは、前のタグからのコミットとマージした PR から自動で作る
           generate_release_notes: true
