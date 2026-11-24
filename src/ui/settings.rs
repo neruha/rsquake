@@ -189,7 +189,6 @@ impl SettingsWindow {
         ctx: &Context,
         config: &mut Config,
         sound: &mut SoundPlayer,
-        game_mode: &mut bool,
         link: LinkInfo,
         update: UpdateView<'_>,
     ) -> bool {
@@ -270,7 +269,7 @@ impl SettingsWindow {
                                     Tab::Location => changed |= location_page(ui, config, &mut buf),
                                     Tab::Sound => changed |= sound_page(ui, config, sound),
                                     Tab::Behavior => {
-                                        changed |= behavior_page(ui, config, game_mode)
+                                        changed |= behavior_page(ui, config)
                                     }
                                     Tab::Update => {
                                         changed |= update_page(
@@ -682,12 +681,11 @@ fn sound_page(ui: &mut Ui, config: &mut Config, sound: &mut SoundPlayer) -> bool
     changed
 }
 
-/// 常駐、EEW 発生時のウィンドウ表示、ゲームモード。ゲームモードは設定ファイルに保存しないので、
-/// 戻り値 (設定が変わったか) には含めない。
-fn behavior_page(ui: &mut Ui, config: &mut Config, game_mode: &mut bool) -> bool {
+/// 常駐、EEW 発生時のウィンドウ表示、ゲームモード。
+fn behavior_page(ui: &mut Ui, config: &mut Config) -> bool {
     let mut changed = false;
     let w = &mut config.window;
-    let note = if *game_mode {
+    let note = if w.game_mode {
         " (ゲームモード中は無効)"
     } else {
         ""
@@ -726,10 +724,10 @@ fn behavior_page(ui: &mut Ui, config: &mut Config, game_mode: &mut bool) -> bool
     });
 
     section(ui, "ゲームモード", "", |rows| {
-        rows.toggle_row(
+        changed |= rows.toggle_row(
             "ゲームモード",
-            "有効の間は、常駐と EEW 発生時の表示を止めます。起動するたびに無効に戻ります。",
-            game_mode,
+            "有効の間は、常駐と EEW 発生時の表示を止めます。",
+            &mut w.game_mode,
         );
     });
     changed
