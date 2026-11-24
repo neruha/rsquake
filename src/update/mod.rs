@@ -1,9 +1,15 @@
-//! 新しいバージョンの確認。GitHub Releases の一覧を起動時に 1 回だけ取り、
-//! いまより新しい版があるかを UI に渡す。
+//! 新しいバージョンの確認と、アプリ内での更新。
 //!
-//! 通知だけで、ダウンロードや差し替えは行わない。リリースノートも取り込まず、
-//! GitHub の Release のページをブラウザで開いて見てもらう。
-//! 失敗しても何も出さず、設定画面の状態にだけ反映する。
+//! GitHub Releases の一覧を起動時に 1 回だけ取り、いまより新しい版があるかを UI に渡す。
+//! 新しい版は、アプリ内でダウンロードして (`download`)、署名とハッシュを確かめ (`verify`)、
+//! 入れ替えて再起動する (`apply`)。アプリ内で更新できない環境 (`asset`) では、
+//! 通知だけを出し、GitHub の Release のページをブラウザで開いて見てもらう。
+//! リリースノートは取り込まない。確認に失敗しても何も出さず、設定画面の状態にだけ反映する。
+
+pub mod apply;
+pub mod asset;
+pub mod download;
+pub mod verify;
 
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -12,6 +18,7 @@ use semver::Version;
 use serde::Deserialize;
 
 use crate::config::UpdateConfig;
+use asset::Asset;
 
 /// Release のページの先頭。ブラウザで開くのは、これで始まる URL だけ。
 pub const RELEASES_PAGE: &str = "https://github.com/neruha/rsquake/releases";
@@ -48,6 +55,8 @@ pub struct Release {
     pub version: Version,
     /// ブラウザで開く URL。必ず `RELEASES_PAGE` 以下
     pub url: String,
+    /// リリースに付いているファイル
+    pub assets: Vec<Asset>,
 }
 
 /// 確認の結果。
@@ -61,6 +70,7 @@ pub struct CheckResult {
 pub enum UpdateEvent {
     Checked(CheckResult),
     Failed(String),
+    Download(download::DownloadEvent),
 }
 
 /// 設定画面が見る、確認の状態。
@@ -74,10 +84,47 @@ pub enum Phase {
     Failed,
 }
 
+/// アプリ内の更新の進み具合。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Install {
+    #[default]
+    None,
+    Downloading {
+        done: u64,
+        total: u64,
+    },
+    /// 署名とハッシュを確かめている
+    Verifying,
+    /// 確認まで済んだ。「再起動して更新」を待っている
+    Ready,
+    /// 適用を頼まれたが、EEW が出ているので終わるまで待っている
+    WaitingForEew,
+    /// 適用役を起動して、終了するところ
+    Applying,
+    Failed(String),
+}
+
+impl Install {
+    /// ダウンロードを始められる状態か。
+    pub fn can_start(&self) -> bool {
+        matches!(self, Self::None | Self::Failed(_))
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct UpdateInfo {
     pub phase: Phase,
     pub result: CheckResult,
+    /// `result.latest` をアプリ内で更新するための準備。更新できない理由は `Err`
+    pub plan: Option<Result<asset::Plan, String>>,
+    pub install: Install,
+}
+
+impl UpdateInfo {
+    /// アプリ内で更新できる新しい版があるか。
+    pub fn installable(&self) -> bool {
+        matches!(self.plan, Some(Ok(_)))
+    }
 }
 
 /// ポップアップで出す通知。
@@ -87,10 +134,14 @@ pub enum Notice {
     Update(Release),
     /// 版が上がった後の初めての起動。いまの版のリリースノート (GitHub) へ案内する
     Upgraded(Version),
+    /// 前回のアプリ内の更新が失敗していた (理由つき)
+    UpdateFailed(String),
 }
 
 /// 出す通知を決める。`result` は確認の結果 (確認しない・失敗したときは `None`)。
-/// - 新しい版があり、スキップしていなければ、それを出す
+/// `failed` は、前回のアプリ内の更新が失敗していたときの理由。
+/// - 前回の更新が失敗していれば、それを出す
+/// - 新しい版があり、スキップしていなければ、それを出す (自動で適用するときは出さない)
 /// - なければ、版が上がった後の初回だけ、いまの版のリリースノートへ案内する
 /// - EEW が出ている間は出さない (あとからも出さない)
 pub fn choose_notice(
@@ -98,11 +149,17 @@ pub fn choose_notice(
     config: &UpdateConfig,
     current: &Version,
     eew_active: bool,
+    failed: Option<&str>,
 ) -> Option<Notice> {
     if eew_active {
         return None;
     }
-    if let Some(latest) = result.and_then(|r| r.latest.as_ref())
+    if let Some(why) = failed {
+        return Some(Notice::UpdateFailed(why.to_string()));
+    }
+    // 自動で適用するときは、確認のポップアップを出さずにダウンロードへ進む
+    if !config.auto_apply
+        && let Some(latest) = result.and_then(|r| r.latest.as_ref())
         && config.skipped_version.as_deref() != Some(&latest.version.to_string())
     {
         return Some(Notice::Update(latest.clone()));
@@ -120,6 +177,17 @@ struct RawRelease {
     draft: bool,
     #[serde(default)]
     prerelease: bool,
+    #[serde(default)]
+    assets: Vec<RawAsset>,
+}
+
+#[derive(Deserialize)]
+struct RawAsset {
+    name: String,
+    #[serde(default)]
+    browser_download_url: String,
+    #[serde(default)]
+    size: u64,
 }
 
 struct Parsed {
@@ -145,8 +213,21 @@ fn parse_releases(json: &[u8]) -> Result<Vec<Parsed>, serde_json::Error> {
             } else {
                 release_url(&version)
             };
+            let assets = r
+                .assets
+                .into_iter()
+                .map(|a| Asset {
+                    name: a.name,
+                    url: a.browser_download_url,
+                    size: a.size,
+                })
+                .collect();
             Some(Parsed {
-                release: Release { version, url },
+                release: Release {
+                    version,
+                    url,
+                    assets,
+                },
                 prerelease: r.prerelease,
             })
         })
@@ -281,6 +362,7 @@ mod tests {
         Release {
             version: v(version),
             url: release_url(&v(version)),
+            assets: Vec::new(),
         }
     }
 
@@ -374,17 +456,29 @@ mod tests {
         let cur = v("0.1.0");
         let res = found("0.3.0");
         assert_eq!(
-            choose_notice(Some(&res), &cfg(None, Some("0.1.0")), &cur, false),
+            choose_notice(Some(&res), &cfg(None, Some("0.1.0")), &cur, false, None),
             Some(Notice::Update(rel("0.3.0")))
         );
         // スキップした版は出さず、案内も済んでいれば何も出ない
         assert_eq!(
-            choose_notice(Some(&res), &cfg(Some("0.3.0"), Some("0.1.0")), &cur, false),
+            choose_notice(
+                Some(&res),
+                &cfg(Some("0.3.0"), Some("0.1.0")),
+                &cur,
+                false,
+                None
+            ),
             None
         );
         // スキップしていても、案内がまだならそちらを出す
         assert_eq!(
-            choose_notice(Some(&res), &cfg(Some("0.3.0"), Some("0.0.9")), &cur, false),
+            choose_notice(
+                Some(&res),
+                &cfg(Some("0.3.0"), Some("0.0.9")),
+                &cur,
+                false,
+                None
+            ),
             Some(Notice::Upgraded(cur.clone()))
         );
         // さらに新しい版が出たら、スキップしていても出す
@@ -393,7 +487,8 @@ mod tests {
                 Some(&found("0.4.0")),
                 &cfg(Some("0.3.0"), Some("0.1.0")),
                 &cur,
-                false
+                false,
+                None
             ),
             Some(Notice::Update(rel("0.4.0")))
         );
@@ -404,27 +499,64 @@ mod tests {
         let cur = v("0.2.0");
         // 確認しない・失敗したときも、版が上がっていれば案内する (ネットワーク不要)
         assert_eq!(
-            choose_notice(None, &cfg(None, None), &cur, false),
+            choose_notice(None, &cfg(None, None), &cur, false, None),
             Some(Notice::Upgraded(cur.clone()))
         );
         assert_eq!(
-            choose_notice(None, &cfg(None, Some("0.1.0")), &cur, false),
+            choose_notice(None, &cfg(None, Some("0.1.0")), &cur, false, None),
             Some(Notice::Upgraded(cur.clone()))
         );
         assert_eq!(
-            choose_notice(None, &cfg(None, Some("0.2.0")), &cur, false),
+            choose_notice(None, &cfg(None, Some("0.2.0")), &cur, false, None),
             None
         );
     }
 
     #[test]
+    fn auto_apply_skips_the_update_popup_but_not_the_other_notices() {
+        let cur = v("0.1.0");
+        let mut c = cfg(None, Some("0.1.0"));
+        c.auto_apply = true;
+        assert_eq!(
+            choose_notice(Some(&found("0.3.0")), &c, &cur, false, None),
+            None
+        );
+        // 版が上がった案内は、自動で適用するときも出す
+        let c = UpdateConfig {
+            auto_apply: true,
+            ..cfg(None, None)
+        };
+        assert_eq!(
+            choose_notice(Some(&found("0.3.0")), &c, &cur, false, None),
+            Some(Notice::Upgraded(cur.clone()))
+        );
+    }
+
+    #[test]
+    fn failed_update_is_shown_first_and_not_during_eew() {
+        let cur = v("0.1.0");
+        let c = cfg(None, None);
+        assert_eq!(
+            choose_notice(Some(&found("0.3.0")), &c, &cur, false, Some("だめ")),
+            Some(Notice::UpdateFailed("だめ".into()))
+        );
+        assert_eq!(choose_notice(None, &c, &cur, true, Some("だめ")), None);
+    }
+
+    #[test]
     fn notice_is_suppressed_during_eew() {
         assert_eq!(
-            choose_notice(Some(&found("0.3.0")), &cfg(None, None), &v("0.1.0"), true),
+            choose_notice(
+                Some(&found("0.3.0")),
+                &cfg(None, None),
+                &v("0.1.0"),
+                true,
+                None
+            ),
             None
         );
         assert_eq!(
-            choose_notice(None, &cfg(None, None), &v("0.1.0"), true),
+            choose_notice(None, &cfg(None, None), &v("0.1.0"), true, None),
             None
         );
     }
