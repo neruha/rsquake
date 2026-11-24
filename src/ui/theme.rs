@@ -75,7 +75,7 @@ pub fn lg_text_color(c: LgClass) -> Color32 {
     }
 }
 
-/// 大きく出す数字用 (BIZ UDGothic Bold)。
+/// 大きく出す数字用 (Gen Interface JP Bold)。
 pub fn display_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("display".into()))
 }
@@ -141,11 +141,6 @@ pub fn install(ctx: &egui::Context) {
     );
     add(
         &mut fonts,
-        "biz-bold",
-        include_bytes!("../../assets/fonts/BIZUDGothic-Bold.ttf"),
-    );
-    add(
-        &mut fonts,
         "seed-bold",
         include_bytes!("../../assets/fonts/LINESeedJP-Bold.ttf"),
     );
@@ -196,7 +191,7 @@ pub fn install(ctx: &egui::Context) {
         .insert(FontFamily::Name("bold".into()), with("gen-bold"));
     fonts
         .families
-        .insert(FontFamily::Name("display".into()), with("biz-bold"));
+        .insert(FontFamily::Name("display".into()), with("gen-bold"));
     fonts
         .families
         .insert(FontFamily::Name("seed-bold".into()), with_jp("seed-bold"));

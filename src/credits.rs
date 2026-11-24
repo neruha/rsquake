@@ -41,14 +41,6 @@ pub const CREDITS: &[Credit] = &[
         full_text: None,
     },
     Credit {
-        name: "Inter",
-        url: Some("https://github.com/rsms/inter"),
-        usage: "フォント",
-        license: "SIL Open Font License 1.1",
-        copyright: "Copyright (c) 2016 The Inter Project Authors",
-        full_text: Some(include_str!("../assets/fonts/OFL-Inter.txt")),
-    },
-    Credit {
         name: "Notification (IENBA)",
         url: Some("https://freesound.org/s/545495/"),
         usage: "効果音 (予報)。加工して使用",
@@ -71,14 +63,6 @@ pub const CREDITS: &[Credit] = &[
         license: "SIL Open Font License 1.1（配布元のビルド用ファイルは MIT License）",
         copyright: "Copyright (c) 2026 Yamato Iizuka",
         full_text: Some(include_str!("../assets/fonts/OFL-GenInterfaceJP.txt")),
-    },
-    Credit {
-        name: "BIZ UDGothic",
-        url: Some("https://github.com/googlefonts/morisawa-biz-ud-gothic"),
-        usage: "フォント",
-        license: "SIL Open Font License 1.1",
-        copyright: "Copyright 2022 The BIZ UDGothic Project Authors",
-        full_text: Some(include_str!("../assets/fonts/OFL-BIZUDGothic.txt")),
     },
     Credit {
         name: "LINE Seed JP",

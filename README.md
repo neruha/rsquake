@@ -113,7 +113,7 @@ bash scripts/package-macos.sh both
 - 観測点リスト: [kyoshin-monitor-observation-points](https://github.com/ingen084/kyoshin-monitor-observation-points)(MIT)
 - リアルタイム震度の画像: 強震モニタ(防災科学技術研究所)
 - 緊急地震速報の受信元: [Wolfx Project](https://wolfx.jp/)
-- フォント: Inter、Gen Interface JP、BIZ UDGothic ほか(SIL Open Font License 1.1)
+- フォント: Gen Interface JP、LINE Seed JP、M PLUS 1p ほか(SIL Open Font License 1.1)
 - 効果音: Freesound の「Notification」(IENBA、CC BY 4.0)と「Text Message」(LoudKevin、CC0 1.0)。どちらも加工して使用
 
 ライセンスの全文はアプリの設定画面の「ライセンス」欄から読めます。
