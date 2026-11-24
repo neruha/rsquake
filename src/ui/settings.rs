@@ -253,7 +253,7 @@ impl SettingsWindow {
                 );
                 let body = Rect::from_min_max(pos2(side.max.x, header.max.y), rect.max);
 
-                self.sidebar(ui, side);
+                self.sidebar(ui, side, graphics.active);
                 close |= self.header(ui, header);
 
                 let mut page = ui.new_child(
@@ -326,7 +326,7 @@ impl SettingsWindow {
     }
 
     /// 左のページ一覧。
-    fn sidebar(&mut self, ui: &Ui, rect: Rect) {
+    fn sidebar(&mut self, ui: &Ui, rect: Rect, engine: &str) {
         let p = ui.painter().clone();
         // 窓の枠線 (1px) の内側なので、角は窓より 1 小さい
         let r = WINDOW_RADIUS - 1;
@@ -356,6 +356,15 @@ impl SettingsWindow {
                 self.tab = tab;
             }
             y += NAV_H + 4.0;
+        }
+        if !engine.is_empty() {
+            p.text(
+                pos2(rect.min.x + 20.0, rect.max.y - 40.0),
+                Align2::LEFT_CENTER,
+                engine,
+                theme::body_font(11.5),
+                theme::TEXT_MUTED,
+            );
         }
         p.text(
             pos2(rect.min.x + 20.0, rect.max.y - 20.0),
