@@ -30,7 +30,7 @@ Write-Host "created $zip"
 # MSI のバージョンは数字だけなので、v0.2.0-pre.1 と v0.2.0 が同じ 0.2.0 になって
 # アップグレードできなくなる。プレリリース (version に - を含む) は MSI を作らず zip だけにする。
 if (-not $SkipMsi -and $version.Contains('-')) {
-    Write-Host "pre-release $version: skipping MSI"
+    Write-Host "pre-release ${version}: skipping MSI"
     $SkipMsi = $true
 }
 
