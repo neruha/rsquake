@@ -66,9 +66,10 @@ winresource = "0.1"
 
 # リリースビルド: 配布用に小さく速くする (コンソールを出さない設定は main.rs)。
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 strip = true
+opt-level = 3
 
 # winit 0.30.13 は Windows でドラッグ中の WM_DPICHANGED を誤って処理し、
 # DPI の違うモニタをまたぐ移動がガクつく。vendor/winit は 0.30.13 に
