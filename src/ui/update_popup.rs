@@ -1,7 +1,7 @@
 //! 新しい版などの通知ポップアップ。地図の右下に出し、10 秒で自動で消える。
 //! マウスが乗っている間は消えるまでの時間を止める。EEW が出たら呼び出し側がすぐに閉じる。
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use egui::{
     Align, Align2, Area, Button, Context, Frame, Id, Label, Layout, Margin, Order, Rect, RichText,
@@ -16,6 +16,8 @@ use crate::update::{Countdown, Notice, release_url};
 const WIDTH: f32 = 340.0;
 /// 地図の隅からの距離
 const EDGE: f32 = 16.0;
+/// 表示中の再描画の間隔。バーが約 1px 刻みで滑らかに進む程度 (10 秒で 340px)。
+const REPAINT: Duration = Duration::from_millis(33);
 
 /// ポップアップで押された操作。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,13 +148,15 @@ impl UpdatePopup {
                     });
             });
 
-        if action == PopupAction::None {
-            let dt = ctx.input(|i| i.unstable_dt);
-            if self.countdown.tick(dt, resp.response.contains_pointer()) {
-                action = PopupAction::Close;
-            }
+        if action == PopupAction::None
+            && self
+                .countdown
+                .tick(Instant::now(), resp.response.contains_pointer())
+        {
+            action = PopupAction::Close;
         }
-        ctx.request_repaint_after(Duration::from_millis(100));
+        // 表示中は毎フレーム次の再描画を予約し直す。入力が無くてもバーが止まらない。
+        ctx.request_repaint_after(REPAINT);
         action
     }
 }

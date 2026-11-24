@@ -6,7 +6,7 @@
 //! 失敗しても何も出さず、設定画面の状態にだけ反映する。
 
 use std::sync::mpsc::Sender;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use semver::Version;
 use serde::Deserialize;
@@ -230,23 +230,35 @@ pub fn spawn(opts: CheckOptions, tx: Sender<UpdateEvent>, ctx: egui::Context) {
 }
 
 /// ポップアップを閉じるまでの残り時間。マウスが乗っている間は進めない。
+/// 描画の間隔ではなく実際の時刻で進めるので、フレームが飛んでも残りは実時間とずれない。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Countdown {
     left: f32,
+    /// 前回 `tick` した時刻
+    last: Instant,
 }
 
 impl Default for Countdown {
     fn default() -> Self {
-        Self { left: POPUP_SECS }
+        Self::new(Instant::now())
     }
 }
 
 impl Countdown {
-    /// `dt` 秒進める。時間切れなら `true`。
-    /// 描画の中断などで `dt` が大きくなっても、1 回で進めるのは 1 秒まで。
-    pub fn tick(&mut self, dt: f32, paused: bool) -> bool {
+    pub fn new(now: Instant) -> Self {
+        Self {
+            left: POPUP_SECS,
+            last: now,
+        }
+    }
+
+    /// 前回から `now` までの実経過時間だけ進める。時間切れなら `true`。
+    /// `paused` の間は止まるが、その間も `last` は進めるので、止めていた時間は引かれない。
+    pub fn tick(&mut self, now: Instant, paused: bool) -> bool {
+        let dt = now.saturating_duration_since(self.last).as_secs_f32();
+        self.last = self.last.max(now);
         if !paused {
-            self.left = (self.left - dt.clamp(0.0, 1.0)).max(0.0);
+            self.left = (self.left - dt).max(0.0);
         }
         self.left <= 0.0
     }
@@ -434,19 +446,28 @@ mod tests {
 
     #[test]
     fn countdown_runs_pauses_and_expires() {
-        let mut c = Countdown::default();
-        assert!(!c.tick(0.5, false));
+        let t0 = Instant::now();
+        let at = |secs: f32| t0 + Duration::from_secs_f32(secs);
+        let mut c = Countdown::new(t0);
+        assert!(!c.tick(at(0.5), false));
         // 止めている間は進まない
-        assert!(!c.tick(1.0, true));
-        assert!((c.fraction() - 0.95).abs() < 1e-6);
-        // 1 回で進めるのは 1 秒まで
-        let mut c = Countdown::default();
-        assert!(!c.tick(100.0, false));
-        assert!((c.fraction() - 0.9).abs() < 1e-6);
-        for _ in 0..8 {
-            assert!(!c.tick(1.0, false));
-        }
-        assert!(c.tick(1.0, false));
+        assert!(!c.tick(at(1.5), true));
+        assert!((c.fraction() - 0.95).abs() < 1e-3);
+        // 止めを外したあとは、止めていた時間を引かずに進む
+        assert!(!c.tick(at(2.5), false));
+        assert!((c.fraction() - 0.85).abs() < 1e-3);
+        // 描画が長く飛んでも、実際に経過した時間の分だけ進む
+        assert!(!c.tick(at(7.5), false));
+        assert!((c.fraction() - 0.35).abs() < 1e-3);
+        assert!(c.tick(at(12.0), false));
         assert_eq!(c.fraction(), 0.0);
+    }
+
+    #[test]
+    fn countdown_ignores_time_going_backwards() {
+        let t0 = Instant::now();
+        let mut c = Countdown::new(t0 + Duration::from_secs(2));
+        assert!(!c.tick(t0, false));
+        assert_eq!(c.fraction(), 1.0);
     }
 }
