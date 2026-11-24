@@ -169,6 +169,13 @@ impl EventStore {
     pub fn get(&self, id: &str) -> Option<&EewEvent> {
         self.events.get(id)
     }
+
+    /// 条件に合う EventID のイベントと、終了済みの記録を消す (デバッグメニュー用)。
+    pub fn remove_where(&mut self, f: impl Fn(&str) -> bool) {
+        self.events.retain(|id, _| !f(id));
+        self.finished.retain(|id, _| !f(id));
+        self.finished_offsets.retain(|id, _| !f(id));
+    }
 }
 
 #[cfg(test)]

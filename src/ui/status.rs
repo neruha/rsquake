@@ -14,6 +14,8 @@ pub struct Status {
     pub source: EewSource,
     pub test_mode: bool,
     pub replay: bool,
+    /// 仮想イベント (デバッグメニュー) を表示している
+    pub debug_events: bool,
     pub kmoni: KmoniStatus,
 }
 
@@ -54,6 +56,9 @@ pub fn show(ui: &Ui, map: Rect, now: DateTime<Utc>, s: &Status) {
         tags.push(("リプレイ", theme::TRAINING, theme::BG));
     } else if s.test_mode {
         tags.push(("テスト", theme::TRAINING, theme::BG));
+    }
+    if s.debug_events {
+        tags.push(("DEBUG", theme::TRAINING, theme::BG));
     }
     if let Some(p) = problem {
         tags.push((

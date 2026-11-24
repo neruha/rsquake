@@ -10,8 +10,12 @@ use egui::{Color32, Rect, Ui, pos2, vec2};
 
 use crate::clock::SimClock;
 use crate::config::Config;
+#[cfg(debug_assertions)]
+use crate::dev::debug_menu::{DebugAction, DebugMenu};
+#[cfg(debug_assertions)]
+use crate::dev::scenario;
 use crate::eew::display::{DisplayState, switch_interval};
-use crate::eew::report::{Incoming, Upstream};
+use crate::eew::report::{EewReport, Incoming, Upstream};
 use crate::eew::store::{ApplyOutcome, EventStore};
 use crate::geo::stations::StationList;
 use crate::geo::topo::Topo;
@@ -89,6 +93,9 @@ pub struct EewApp {
     /// EEW の受信スレッド。リプレイ中は無い。受信元を変えたらつなぎ直す
     ws: Option<WsSupervisor>,
     update: Updater,
+    /// デバッグメニュー (デバッグビルドだけ)
+    #[cfg(debug_assertions)]
+    debug: DebugMenu,
 }
 
 /// 新しい版の確認と、その通知。リプレイ中は何もしない。
@@ -158,6 +165,8 @@ impl EewApp {
             clock,
             ws,
             update,
+            #[cfg(debug_assertions)]
+            debug: DebugMenu::default(),
         }
     }
 
@@ -191,23 +200,48 @@ impl EewApp {
                     }
                     self.kmoni.failing = true;
                 }
-                NetEvent::Message(Incoming::Report(r)) => {
-                    let (id, serial) = (r.event_id.clone(), r.serial);
-                    let is_warning = r.is_warning;
-                    let outcome = self.store.apply(*r, now);
-                    self.sound.on_eew(&outcome, is_warning, &self.config.sound);
-                    self.display.notify(&id, &outcome);
-                    match outcome {
-                        ApplyOutcome::Rejected(why) => {
-                            tracing::info!("{id} 第{serial}報を捨てた: {why}")
-                        }
-                        o => tracing::info!("{id} 第{serial}報: {o:?}"),
-                    }
-                }
+                NetEvent::Message(Incoming::Report(r)) => self.apply_report(*r, now),
                 NetEvent::Message(_) => {}
             }
         }
         self.store.prune(now);
+    }
+
+    /// 受信した 1 報を store に入れ、音と表示の切り替えに伝える。
+    fn apply_report(&mut self, r: EewReport, now: DateTime<Utc>) {
+        let (id, serial) = (r.event_id.clone(), r.serial);
+        let is_warning = r.is_warning;
+        let outcome = self.store.apply(r, now);
+        self.sound.on_eew(&outcome, is_warning, &self.config.sound);
+        self.display.notify(&id, &outcome);
+        match outcome {
+            ApplyOutcome::Rejected(why) => {
+                tracing::info!("{id} 第{serial}報を捨てた: {why}")
+            }
+            o => tracing::info!("{id} 第{serial}報: {o:?}"),
+        }
+    }
+
+    /// デバッグメニュー: コナミコマンドの受付と、メニューからの依頼の処理。
+    #[cfg(debug_assertions)]
+    fn debug_step(&mut self, ctx: &egui::Context, now: DateTime<Utc>) {
+        if self.settings.open {
+            self.debug.feed_keys(ctx);
+        } else {
+            self.debug.settings_closed();
+        }
+        for action in self.debug.show(ctx, now, &self.update.current) {
+            match action {
+                DebugAction::Send(r) => self.apply_report(*r, now),
+                DebugAction::ClearVirtual => {
+                    self.store.remove_where(scenario::is_debug_id);
+                }
+                DebugAction::Popup(notice) => {
+                    self.update.popup = Some(UpdatePopup::new(notice, self.update.current.clone()));
+                }
+                DebugAction::ClosePopup => self.update.popup = None,
+            }
+        }
     }
 
     /// 更新の確認の結果を受け取り、起動時の通知を出すか決める。
@@ -255,6 +289,19 @@ impl EewApp {
     fn save_config(&self) {
         if let Err(e) = self.config.save() {
             tracing::warn!("設定を保存できない: {e}");
+        }
+    }
+
+    /// 表示中のイベントに、デバッグメニューの仮想イベントがあるか。リリースでは常に偽。
+    fn has_debug_events(&self, active: &[&crate::eew::store::EewEvent]) -> bool {
+        #[cfg(debug_assertions)]
+        return active
+            .iter()
+            .any(|e| scenario::is_debug_id(&e.latest.event_id));
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = active;
+            false
         }
     }
 }
@@ -339,6 +386,7 @@ impl eframe::App for EewApp {
                 source: self.config.source,
                 test_mode: self.config.test_mode,
                 replay: self.replay || self.clock.is_some(),
+                debug_events: self.has_debug_events(&active),
                 kmoni: kmoni_status,
             },
         );
@@ -437,6 +485,9 @@ impl eframe::App for EewApp {
                 self.upstream = Upstream::Unknown;
             }
         }
+
+        #[cfg(debug_assertions)]
+        self.debug_step(ui.ctx(), now);
 
         // 再描画: EEW 表示中は予報円が動く速さに合わせる (時計のために毎秒は必ず描く)。
         // 平常時は時計のために毎秒。
