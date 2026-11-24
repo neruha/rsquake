@@ -79,7 +79,7 @@ jobs:
           files: artifacts/*
           # 下書きで作る。内容を確認してから GitHub 上で公開する
           draft: true
-          # v0.3.0-beta.1 のように - を含むタグはプレリリース
+          # v0.3.0-pre.1 のように - を含むタグはプレリリース
           prerelease: ${{ contains(github.ref_name, '-') }}
           # リリースノートは、前のタグからのコミットとマージした PR から自動で作る
           generate_release_notes: true

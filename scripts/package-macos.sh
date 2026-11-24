@@ -13,6 +13,8 @@ cd "$(dirname "$0")/.."
 
 MODE="${1:-native}"
 VERSION="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)"
+# CFBundleShortVersionString は数字とドットだけなので、-pre.1 などの接尾辞は落とす
+PLIST_VERSION="${VERSION%%-*}"
 APP_NAME="RSQuake"
 BUNDLE_ID="me.neru.rsquake"
 IDENTITY="${CODESIGN_IDENTITY:--}"
@@ -39,8 +41,8 @@ package() {
   <key>CFBundleExecutable</key><string>rsquake</string>
   <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$PLIST_VERSION</string>
+  <key>CFBundleVersion</key><string>$PLIST_VERSION</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
