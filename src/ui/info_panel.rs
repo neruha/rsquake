@@ -270,7 +270,7 @@ fn value_block(painter: &Painter, pos: Pos2, title: &str, value: &str, max_w: f3
         size *= max_w / w;
     }
     painter.text(
-        pos + vec2(-2.0 * s, 36.0 * s),
+        pos + vec2(-2.0 * s, 42.0 * s),
         Align2::LEFT_CENTER,
         value,
         theme::mplus_medium_font(size),
