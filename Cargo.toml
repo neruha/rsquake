@@ -31,6 +31,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "mp3"] }
 # 更新の署名 (minisign) の確認と、配布物の SHA-256、ポータブル版の zip の展開
 minisign-verify = "0.3.0"
+# 起動の前に DirectX 12 の GPU を探す (graphics::dx12_available)。wgpu の非同期 API を待つだけ
+pollster = "1.0.1"
 semver = "1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

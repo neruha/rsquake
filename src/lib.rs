@@ -5,6 +5,7 @@ pub mod credits;
 pub mod dev;
 pub mod eew;
 pub mod geo;
+pub mod graphics;
 pub mod net;
 pub mod resident;
 pub mod sound;

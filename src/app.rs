@@ -20,6 +20,7 @@ use crate::eew::store::{ApplyOutcome, EventStore};
 use crate::geo::stations::StationList;
 use crate::geo::topo::Topo;
 use crate::geo::travel_time::TravelTimeTable;
+use crate::graphics::{self, StartupGuard};
 use crate::net::kmoni::KmoniEvent;
 use crate::net::ws::WsSupervisor;
 use crate::net::{LinkState, NetEvent};
@@ -27,7 +28,7 @@ use crate::resident::tray::{self, Tray, TrayAction};
 use crate::resident::{AutoShow, Behavior, WindowState, wants_show};
 use crate::sound::SoundPlayer;
 use crate::ui::map::{MapEvent, MapView, Overlays, StationLayer};
-use crate::ui::settings::{LinkInfo, SettingsWindow, UpdateView};
+use crate::ui::settings::{GraphicsView, LinkInfo, SettingsWindow, UpdateView};
 use crate::ui::status::{KmoniStatus, Status};
 use crate::ui::update_popup::{PopupAction, UpdatePopup};
 use crate::ui::{arrival_panel, info_panel, intensity_panel, status, theme};
@@ -108,6 +109,7 @@ pub struct EewApp {
     auto_show: AutoShow,
     /// 閉じるボタンで隠して、まだ戻していない
     hidden: bool,
+    graphics: GraphicsState,
     /// トレイの「終了」から終わらせている (閉じるボタンの隠す処理を飛ばす)
     quitting: bool,
     /// EEW でウィンドウを表示する依頼 (次の `logic` で処理する)
@@ -142,6 +144,17 @@ struct Updater {
     auto_blocked: bool,
 }
 
+/// 描画のバックエンド。設定画面で変えたら、再起動で効かせる。
+struct GraphicsState {
+    /// この起動で使っている設定 (設定画面での変更は再起動まで効かない)
+    launched: crate::config::GraphicsBackend,
+    /// 実際に選ばれた API の名前 (「DirectX 12」など)
+    active: String,
+    dx12_available: bool,
+    /// DirectX 12 での起動中の目印。落ちずに動いたら消す
+    guard: Option<StartupGuard>,
+}
+
 impl EewApp {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -153,8 +166,14 @@ impl EewApp {
         kmoni_enabled: bool,
         clock: Option<SimClock>,
         ws: Option<WsSupervisor>,
+        launch: graphics::Launch,
     ) -> Self {
         theme::install(&cc.egui_ctx);
+        let active = cc
+            .wgpu_render_state
+            .as_ref()
+            .map_or_else(String::new, |s| graphics::backend_label(s.adapter.get_info().backend));
+        tracing::info!("描画: {active}");
         let (update_tx, update_rx) = channel();
         let update_enabled = !replay && clock.is_none();
         let mut update = Updater {
@@ -211,6 +230,12 @@ impl EewApp {
             tray,
             auto_show: AutoShow::default(),
             hidden: false,
+            graphics: GraphicsState {
+                launched: launch.backend,
+                active,
+                dx12_available: launch.dx12_available,
+                guard: launch.guard,
+            },
             quitting: false,
             show_pending: false,
             lower_at: None,
@@ -633,8 +658,20 @@ impl Updater {
 }
 
 impl eframe::App for EewApp {
+    /// 起動から間もなく終わっても、落ちたのではないので目印を消す。
+    fn on_exit(&mut self) {
+        if let Some(g) = self.graphics.guard.take() {
+            g.disarm();
+        }
+    }
+
     /// ウィンドウが隠れていても呼ばれる。受信の取り込みなど、止めてはいけない処理はここに置く。
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(g) = self.graphics.guard.take_if(|g| g.settled(Instant::now())) {
+            g.disarm();
+        } else if self.graphics.guard.is_some() {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
         self.sync_tray(ctx);
         self.drain();
         let now = self.now();
@@ -801,6 +838,11 @@ impl eframe::App for EewApp {
             info: &self.update.info,
             current: &self.update.current,
         };
+        let graphics_view = GraphicsView {
+            launched: self.graphics.launched,
+            active: &self.graphics.active,
+            dx12_available: self.graphics.dx12_available,
+        };
 
         let settings_changed = self.settings.show(
             ui.ctx(),
@@ -808,7 +850,18 @@ impl eframe::App for EewApp {
             &mut self.sound,
             link,
             update_view,
+            graphics_view,
         );
+        if std::mem::take(&mut self.settings.request_restart) {
+            self.save_config();
+            match graphics::restart() {
+                Ok(()) => {
+                    self.quitting = true;
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                Err(e) => tracing::warn!("再起動できない: {e}"),
+            }
+        }
         if std::mem::take(&mut self.settings.request_install) {
             self.update.start_download(ui.ctx());
             // 設定画面からは、確認まで済んだところで止めて「再起動して更新」を待つ

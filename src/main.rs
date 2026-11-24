@@ -10,6 +10,7 @@ use rsquake::dev::replay::{self, ReplayOptions};
 use rsquake::dev::srev;
 use rsquake::geo::stations::StationList;
 use rsquake::geo::topo::Topo;
+use rsquake::graphics;
 use rsquake::net::kmoni::{self, KmoniOptions};
 use rsquake::net::ws::WsSupervisor;
 use std::sync::Arc;
@@ -108,6 +109,8 @@ fn main() -> eframe::Result {
     if args.test {
         config.force_test_mode();
     }
+    let launch = graphics::prepare(&mut config);
+    let backend = launch.backend;
     let replaying = !args.replay.is_empty();
     let kmoni_enabled = !args.no_kmoni;
     let stations = Arc::new(StationList::bundled());
@@ -146,12 +149,13 @@ fn main() -> eframe::Result {
     if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/icon.png")) {
         viewport = viewport.with_icon(icon);
     }
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport,
         ..Default::default()
     };
+    graphics::configure(&mut options, backend);
 
-    eframe::run_native(
+    let result = eframe::run_native(
         "rsquake",
         options,
         Box::new(move |cc| {
@@ -199,7 +203,24 @@ fn main() -> eframe::Result {
                 kmoni_enabled,
                 clock,
                 supervisor,
+                launch,
             )))
         }),
-    )
+    );
+    if let Err(e) = &result
+        && backend == rsquake::config::GraphicsBackend::Dx12
+    {
+        // 落ちずにエラーで返ってきたときは、次の起動を待たずにここで Vulkan に戻す
+        tracing::error!("DirectX 12 で起動できない ({e})。Vulkan で起動し直す");
+        graphics::clear_marker();
+        let mut c = Config::load();
+        c.graphics.backend = rsquake::config::GraphicsBackend::Vulkan;
+        c.graphics.dx12_failed = true;
+        if let Err(e) = c.save() {
+            tracing::warn!("設定を保存できない: {e}");
+        } else if graphics::restart().is_ok() {
+            return Ok(());
+        }
+    }
+    result
 }

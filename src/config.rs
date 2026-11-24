@@ -29,6 +29,28 @@ pub struct Config {
     pub eew: EewConfig,
     pub update: UpdateConfig,
     pub window: WindowConfig,
+    pub graphics: GraphicsConfig,
+}
+
+/// 描画のバックエンド。切り替えは再起動で効く。
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct GraphicsConfig {
+    /// Windows だけで選べる。ほかの OS では使わない
+    pub backend: GraphicsBackend,
+    /// DirectX 12 で起動できなかったので、Vulkan に戻した。設定画面で知らせる。
+    /// 描画方式を選び直したら消す
+    pub dx12_failed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphicsBackend {
+    /// 従来の既定 (wgpu に任せる。Windows ではふつう Vulkan になる)
+    #[default]
+    Vulkan,
+    /// DirectX 12。メモリが少なくて済む
+    Dx12,
 }
 
 /// ウィンドウの常駐と、EEW 発生時の表示。
@@ -229,6 +251,7 @@ impl Default for Config {
             eew: EewConfig::default(),
             update: UpdateConfig::default(),
             window: WindowConfig::default(),
+            graphics: GraphicsConfig::default(),
         }
     }
 }
@@ -475,5 +498,17 @@ mod tests {
         assert_eq!(c.saved_test_mode, Some(false));
         let text = toml::to_string_pretty(&c).unwrap();
         assert!(!text.contains("saved_test_mode"));
+    }
+
+    #[test]
+    fn graphics_defaults_to_vulkan_and_roundtrips() {
+        let c: Config = toml::from_str("test_mode = true\n").unwrap();
+        assert_eq!(c.graphics, GraphicsConfig::default());
+        assert_eq!(c.graphics.backend, GraphicsBackend::Vulkan);
+        let c: Config = toml::from_str("[graphics]\nbackend = \"dx12\"\n").unwrap();
+        assert_eq!(c.graphics.backend, GraphicsBackend::Dx12);
+        assert!(!c.graphics.dx12_failed);
+        let back: Config = toml::from_str(&toml::to_string_pretty(&c).unwrap()).unwrap();
+        assert_eq!(back.graphics, c.graphics);
     }
 }
