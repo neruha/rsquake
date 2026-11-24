@@ -37,6 +37,8 @@ pub struct Config {
 pub struct WindowConfig {
     /// 閉じてもトレイに常駐する
     pub resident: bool,
+    /// ゲームモード。常駐と EEW での自動表示を止める。次回の起動にも引き継ぐ
+    pub game_mode: bool,
     pub popup: PopupConfig,
 }
 

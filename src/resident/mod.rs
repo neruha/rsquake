@@ -96,6 +96,7 @@ mod tests {
         WindowConfig {
             resident,
             popup: PopupConfig::default(),
+            ..WindowConfig::default()
         }
     }
 

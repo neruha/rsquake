@@ -102,8 +102,6 @@ pub struct EewApp {
     /// EEW の受信スレッド。リプレイ中は無い。受信元を変えたらつなぎ直す
     ws: Option<WsSupervisor>,
     update: Updater,
-    /// ゲームモード。常駐と EEW での自動表示を止める。保存せず、起動のたびにオフ
-    game_mode: bool,
     /// トレイ。常駐の設定がオンで、この OS で作れたときだけある
     tray: Option<Tray>,
     /// 自動で表示したウィンドウを元に戻すための記憶
@@ -210,7 +208,6 @@ impl EewApp {
             clock,
             ws,
             update,
-            game_mode: false,
             tray,
             auto_show: AutoShow::default(),
             hidden: false,
@@ -224,7 +221,11 @@ impl EewApp {
 
     /// いま効いている常駐と自動表示の動作。
     fn behavior(&self) -> Behavior {
-        Behavior::new(&self.config.window, self.game_mode, self.tray.is_some())
+        Behavior::new(
+            &self.config.window,
+            self.config.window.game_mode,
+            self.tray.is_some(),
+        )
     }
 
     fn now(&self) -> DateTime<Utc> {
@@ -362,12 +363,12 @@ impl EewApp {
     fn sync_tray(&mut self, ctx: &egui::Context) {
         let want = self.config.window.resident && tray::SUPPORTED;
         if want && self.tray.is_none() {
-            self.tray = Tray::new(ctx, self.game_mode);
+            self.tray = Tray::new(ctx, self.config.window.game_mode);
         } else if !want {
             self.tray = None;
         }
         if let Some(t) = self.tray.as_mut() {
-            t.set_game_mode(self.game_mode);
+            t.set_game_mode(self.config.window.game_mode);
         }
     }
 
@@ -410,7 +411,10 @@ impl EewApp {
                     self.settings.open_behavior();
                     self.show_window(ctx, false);
                 }
-                TrayAction::ToggleGameMode => self.game_mode = !self.game_mode,
+                TrayAction::ToggleGameMode => {
+                    self.config.window.game_mode = !self.config.window.game_mode;
+                    self.save_config();
+                }
                 TrayAction::Quit => {
                     self.quitting = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -435,7 +439,7 @@ impl EewApp {
     /// EEW でのウィンドウ表示と、終了後に元へ戻す処理。
     fn auto_show_step(&mut self, ctx: &egui::Context, eew_active: bool) {
         use egui::ViewportCommand;
-        if self.game_mode {
+        if self.config.window.game_mode {
             self.auto_show.cancel();
             self.show_pending = false;
         }
@@ -721,7 +725,6 @@ impl eframe::App for EewApp {
                 test_mode: self.config.test_mode,
                 replay: self.replay || self.clock.is_some(),
                 debug_events: self.has_debug_events(&active),
-                game_mode: self.game_mode,
                 kmoni: kmoni_status,
             },
         );
@@ -803,7 +806,6 @@ impl eframe::App for EewApp {
             ui.ctx(),
             &mut self.config,
             &mut self.sound,
-            &mut self.game_mode,
             link,
             update_view,
         );
