@@ -80,16 +80,18 @@ enum Tab {
     Display,
     Location,
     Sound,
+    Behavior,
     Update,
     License,
 }
 
 impl Tab {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Connection,
         Self::Display,
         Self::Location,
         Self::Sound,
+        Self::Behavior,
         Self::Update,
         Self::License,
     ];
@@ -100,6 +102,7 @@ impl Tab {
             Self::Display => "表示",
             Self::Location => "指定地点",
             Self::Sound => "効果音",
+            Self::Behavior => "動作",
             Self::Update => "アップデート",
             Self::License => "ライセンス",
         }
@@ -111,6 +114,7 @@ impl Tab {
             Self::Display => Icon::Monitor,
             Self::Location => Icon::MapPin,
             Self::Sound => Icon::Volume2,
+            Self::Behavior => Icon::AppWindow,
             Self::Update => Icon::RefreshCw,
             Self::License => Icon::ScrollText,
         }
@@ -181,6 +185,7 @@ impl SettingsWindow {
         ctx: &Context,
         config: &mut Config,
         sound: &mut SoundPlayer,
+        game_mode: &mut bool,
         link: LinkInfo,
         update: UpdateView<'_>,
     ) -> bool {
@@ -260,6 +265,9 @@ impl SettingsWindow {
                                     Tab::Display => changed |= display_page(ui, config),
                                     Tab::Location => changed |= location_page(ui, config, &mut buf),
                                     Tab::Sound => changed |= sound_page(ui, config, sound),
+                                    Tab::Behavior => {
+                                        changed |= behavior_page(ui, config, game_mode)
+                                    }
                                     Tab::Update => {
                                         changed |= update_page(
                                             ui,
@@ -282,6 +290,12 @@ impl SettingsWindow {
             self.buf = Some(buf);
         }
         changed
+    }
+
+    /// 「動作」のページを開く (トレイの「設定」から)。
+    pub fn open_behavior(&mut self) {
+        self.open = true;
+        self.tab = Tab::Behavior;
     }
 
     /// 左のページ一覧。
@@ -660,6 +674,59 @@ fn sound_page(ui: &mut Ui, config: &mut Config, sound: &mut SoundPlayer) -> bool
     changed
 }
 
+/// 常駐、EEW 発生時のウィンドウ表示、ゲームモード。ゲームモードは設定ファイルに保存しないので、
+/// 戻り値 (設定が変わったか) には含めない。
+fn behavior_page(ui: &mut Ui, config: &mut Config, game_mode: &mut bool) -> bool {
+    let mut changed = false;
+    let w = &mut config.window;
+    let note = if *game_mode {
+        " (ゲームモード中は無効)"
+    } else {
+        ""
+    };
+
+    if crate::resident::tray::SUPPORTED {
+        section(ui, "常駐", "", |rows| {
+            changed |= rows.toggle_row(
+                "閉じたときにトレイに常駐する",
+                &format!(
+                    "ウィンドウを閉じても終了せず、トレイ (メニューバー) から開き直せます。EEW の受信は続きます。{note}"
+                ),
+                &mut w.resident,
+            );
+        });
+    }
+
+    section(ui, "EEW 発生時の表示", "", |rows| {
+        changed |= rows.toggle_row(
+            "ウィンドウを表示する",
+            &format!(
+                "EEW が出たら、隠れているウィンドウや最小化したウィンドウを前に出します。{note}"
+            ),
+            &mut w.popup.enabled,
+        );
+        let on = w.popup.enabled;
+        rows.disabled_unless(on, |rows| {
+            changed |= rows.toggle_row("予報で表示", "", &mut w.popup.forecast);
+            changed |= rows.toggle_row("警報で表示", "", &mut w.popup.warning);
+            changed |= rows.toggle_row(
+                "EEW が終わったら元に戻す",
+                "自動で表示したウィンドウを、隠れていた状態、または最小化した状態に戻します。ウィンドウを操作すると戻しません。",
+                &mut w.popup.hide_after,
+            );
+        });
+    });
+
+    section(ui, "ゲームモード", "", |rows| {
+        rows.toggle_row(
+            "ゲームモード",
+            "有効の間は、常駐と EEW 発生時の表示を止めます。起動するたびに無効に戻ります。",
+            game_mode,
+        );
+    });
+    changed
+}
+
 /// アップデートの設定と、確認の状態。ダウンロードとリリースノートは GitHub のページで見てもらう。
 fn update_page(
     ui: &mut Ui,
@@ -985,6 +1052,14 @@ impl Rows<'_> {
                 .layout(Layout::right_to_left(Align::Center)),
         );
         add(&mut child)
+    }
+
+    /// `enabled` が偽の間、中の行を操作できなくする。
+    fn disabled_unless(&mut self, enabled: bool, add: impl FnOnce(&mut Rows<'_>)) {
+        let first = std::mem::replace(&mut self.first, false);
+        self.ui.add_enabled_ui(enabled, |ui| {
+            add(&mut Rows { ui, first });
+        });
     }
 
     fn toggle_row(&mut self, title: &str, desc: &str, on: &mut bool) -> bool {

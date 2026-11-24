@@ -6,6 +6,7 @@ pub mod dev;
 pub mod eew;
 pub mod geo;
 pub mod net;
+pub mod resident;
 pub mod sound;
 pub mod ui;
 pub mod update;

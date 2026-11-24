@@ -16,6 +16,8 @@ pub struct Status {
     pub replay: bool,
     /// 仮想イベント (デバッグメニュー) を表示している
     pub debug_events: bool,
+    /// ゲームモード中 (常駐と EEW での自動表示を止めている)
+    pub game_mode: bool,
     pub kmoni: KmoniStatus,
 }
 
@@ -59,6 +61,9 @@ pub fn show(ui: &Ui, map: Rect, now: DateTime<Utc>, s: &Status) {
     }
     if s.debug_events {
         tags.push(("DEBUG", theme::TRAINING, theme::BG));
+    }
+    if s.game_mode {
+        tags.push(("ゲームモード", theme::TRAINING, theme::BG));
     }
     if let Some(p) = problem {
         tags.push((

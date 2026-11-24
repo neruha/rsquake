@@ -28,6 +28,40 @@ pub struct Config {
     pub sound: SoundConfig,
     pub eew: EewConfig,
     pub update: UpdateConfig,
+    pub window: WindowConfig,
+}
+
+/// ウィンドウの常駐と、EEW 発生時の表示。
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct WindowConfig {
+    /// 閉じてもトレイに常駐する
+    pub resident: bool,
+    pub popup: PopupConfig,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct PopupConfig {
+    /// EEW でウィンドウを表示する
+    pub enabled: bool,
+    /// 予報で表示する
+    pub forecast: bool,
+    /// 警報で表示する
+    pub warning: bool,
+    /// EEW が終わったら、自動で表示したウィンドウを元に戻す
+    pub hide_after: bool,
+}
+
+impl Default for PopupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            forecast: true,
+            warning: true,
+            hide_after: true,
+        }
+    }
 }
 
 /// 新しいバージョンの確認 (GitHub Releases)。
@@ -188,6 +222,7 @@ impl Default for Config {
             sound: SoundConfig::default(),
             eew: EewConfig::default(),
             update: UpdateConfig::default(),
+            window: WindowConfig::default(),
         }
     }
 }
@@ -327,6 +362,18 @@ mod tests {
         );
         assert_eq!(c.location.unwrap().name, "東京");
         assert_eq!(c.sound, SoundConfig::default());
+        assert_eq!(c.window, WindowConfig::default());
+    }
+
+    #[test]
+    fn window_section_round_trips() {
+        let c: Config =
+            toml::from_str("[window]\nresident = true\n[window.popup]\nwarning = false\n").unwrap();
+        assert!(c.window.resident);
+        assert!(c.window.popup.enabled && c.window.popup.forecast && c.window.popup.hide_after);
+        assert!(!c.window.popup.warning);
+        let back: Config = toml::from_str(&toml::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back.window, c.window);
     }
 
     #[test]
