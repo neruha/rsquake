@@ -31,17 +31,19 @@ pub fn height_for(width: f32) -> f32 {
 /// `position` は、複数のイベントがあるときの (表示中の番号, 全体の数)。
 pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usize, usize)>) {
     let s = (rect.width() / DESIGN_W).min(rect.height() / DESIGN_H);
+    // 高さに制限されて縮尺が小さい時も、横はパネル幅いっぱいまで使う (デザイン座標での幅)。
+    let w = rect.width() / s;
     let origin = rect.min;
     // デザイン座標 (パネル左上が原点) を画面の座標にする。
     let p = |x: f32, y: f32| pos2(origin.x + x * s, origin.y + y * s);
     let r = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(p(x, y), vec2(w * s, h * s));
     let painter = ui.painter_at(rect);
 
-    let card = r(0.0, CARD_TOP, DESIGN_W, DESIGN_H - CARD_TOP);
+    let card = r(0.0, CARD_TOP, w, DESIGN_H - CARD_TOP);
     painter.rect_filled(card, 12.0 * s, CARD_FILL);
 
     let Some(ev) = event else {
-        let band = r(0.0, 0.0, DESIGN_W, BAND_H);
+        let band = r(0.0, 0.0, w, BAND_H);
         painter.rect_filled(band, 12.0 * s, theme::CANCELED);
         painter.text(
             card.center(),
@@ -62,7 +64,7 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
     } else {
         (FORECAST_BAND, Color32::BLACK, "緊急地震速報（予報）")
     };
-    let band = r(0.0, 0.0, DESIGN_W, BAND_H);
+    let band = r(0.0, 0.0, w, BAND_H);
     painter.rect_filled(band, 12.0 * s, fill);
     painter.text(
         p(18.0, BAND_H / 2.0 + TITLE_DY),
@@ -72,7 +74,7 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
         color,
     );
     let serial_rect = painter.text(
-        p(DESIGN_W - 17.0, BAND_H / 2.0),
+        p(w - 17.0, BAND_H / 2.0),
         Align2::RIGHT_CENTER,
         format!("#{}", rep.serial),
         theme::serial_font(32.0 * s),
@@ -116,7 +118,7 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
         HypocenterKind::LowAccuracy => "（精度低）で地震",
         HypocenterKind::Normal => "で地震",
     };
-    let max_w = (DESIGN_W - 36.0) * s;
+    let max_w = (w - 36.0) * s;
     let mut name_size = 40.0 * s;
     let measure = |text: &str, font: FontId| {
         painter
@@ -169,7 +171,11 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
     let max_int = intensity.map(|i| &i.max_int);
     let shindo_icon = icons.shindo(max_int.and_then(|f| f.representative()));
     let box_y = CARD_TOP + 103.0;
-    painter.rect_filled(r(18.0, box_y, 270.0, 106.0), 6.9 * s, shindo_icon.box_color);
+    // 左の枠は、余った幅の半分だけ広げる (右の列にも半分を回す)
+    let box_w = 270.0 + (w - DESIGN_W) * 0.5;
+    let text_x = 100.0 + (box_w - 270.0) / 2.0;
+    let icon_x = 18.0 + box_w - 98.0;
+    painter.rect_filled(r(18.0, box_y, box_w, 106.0), 6.9 * s, shindo_icon.box_color);
     // 「5弱以上」「4〜5弱」のように幅がある時は、ラベルの下に補足する
     let range_label = max_int
         .map(|f| widgets::forecast_label(f, Shindo::label).0)
@@ -181,14 +187,14 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
     };
     two_lines(
         &painter,
-        p(100.0, label_y),
+        p(text_x, label_y),
         ("最大", "予測震度"),
         27.0 * s,
         32.0 * s,
     );
     if let Some(label) = range_label {
         painter.text(
-            p(100.0, box_y + 98.0),
+            p(text_x, box_y + 98.0),
             Align2::CENTER_BOTTOM,
             label,
             theme::seed_bold_font(15.0 * s),
@@ -197,7 +203,7 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
     }
     painter.image(
         shindo_icon.texture.id(),
-        r(190.0, box_y + 8.0, 90.0, 90.0),
+        r(icon_x, box_y + 8.0, 90.0, 90.0),
         Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
         Color32::WHITE,
     );
@@ -208,17 +214,17 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
         Some(f) => icons.lg(f.representative()),
         None => icons.none(),
     };
-    painter.rect_filled(r(18.0, lg_y, 270.0, 106.0), 6.9 * s, lg_icon_data.box_color);
+    painter.rect_filled(r(18.0, lg_y, box_w, 106.0), 6.9 * s, lg_icon_data.box_color);
     two_lines(
         &painter,
-        p(100.0, lg_y + 53.0),
+        p(text_x, lg_y + 53.0),
         ("最大予測長周期", "地震動階級"),
         18.5 * s,
         22.0 * s,
     );
     painter.image(
         lg_icon_data.texture.id(),
-        r(190.0, lg_y + 8.0, 90.0, 90.0),
+        r(icon_x, lg_y + 8.0, 90.0, 90.0),
         Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
         Color32::WHITE,
     );
@@ -236,11 +242,12 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
         (_, Some(d)) => format!("{d:.0}km"),
         (_, None) => "不明".to_string(),
     };
-    let col_w = (DESIGN_W - 18.0 - 313.0) * s;
-    value_block(&painter, p(313.0, CARD_TOP + 122.0), "規模", &mag, col_w, s);
+    let col_x = 18.0 + box_w + 25.0;
+    let col_w = (w - 18.0 - col_x) * s;
+    value_block(&painter, p(col_x, CARD_TOP + 122.0), "規模", &mag, col_w, s);
     value_block(
         &painter,
-        p(315.0, CARD_TOP + 239.0),
+        p(col_x + 2.0, CARD_TOP + 239.0),
         "深さ",
         &depth,
         col_w,
