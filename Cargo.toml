@@ -1,6 +1,6 @@
 [package]
 name = "rsquake"
-version = "0.2.0-pre.2"
+version = "0.2.0"
 authors = ["neruha <neruha@neru.me>"]
 edition = "2024"
 

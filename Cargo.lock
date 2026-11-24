@@ -3439,7 +3439,7 @@ dependencies = [
 
 [[package]]
 name = "rsquake"
-version = "0.2.0-pre.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
