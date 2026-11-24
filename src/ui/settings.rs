@@ -17,7 +17,7 @@ use egui::{
 };
 use lucide_icons::Icon;
 
-use crate::config::{Config, EewSource, Location, RegionDisplay, SoundConfig};
+use crate::config::{Config, EewSource, GraphicsBackend, Location, RegionDisplay, SoundConfig};
 use crate::credits::CREDITS;
 use crate::eew::display::{MAX_SWITCH_SECS, MIN_SWITCH_SECS};
 use crate::eew::report::Upstream;
@@ -137,6 +137,16 @@ pub struct UpdateView<'a> {
     pub current: &'a semver::Version,
 }
 
+/// 表示のページに出す、描画の状態。
+#[derive(Clone, Copy)]
+pub struct GraphicsView<'a> {
+    /// この起動で使っている設定
+    pub launched: GraphicsBackend,
+    /// 実際に使っている API の名前
+    pub active: &'a str,
+    pub dx12_available: bool,
+}
+
 #[derive(Default)]
 pub struct SettingsWindow {
     pub open: bool,
@@ -146,6 +156,8 @@ pub struct SettingsWindow {
     pub request_install: bool,
     /// 「再起動して更新」が押された。呼び出し側が適用して、false に戻す
     pub request_apply: bool,
+    /// 描画方式を変えて「再起動」が押された。呼び出し側が起動し直して、false に戻す
+    pub request_restart: bool,
     tab: Tab,
     /// 全文を開いているクレジットの添字
     opened_license: Option<usize>,
@@ -191,6 +203,7 @@ impl SettingsWindow {
         sound: &mut SoundPlayer,
         link: LinkInfo,
         update: UpdateView<'_>,
+        graphics: GraphicsView<'_>,
     ) -> bool {
         if !self.open {
             // 閉じたら編集中の文字は捨てる (次に開いたとき設定から作り直す)
@@ -265,7 +278,14 @@ impl SettingsWindow {
                                     Tab::Connection => {
                                         changed |= connection_page(ui, config, &mut buf, link);
                                     }
-                                    Tab::Display => changed |= display_page(ui, config),
+                                    Tab::Display => {
+                                        changed |= display_page(
+                                            ui,
+                                            config,
+                                            graphics,
+                                            &mut self.request_restart,
+                                        );
+                                    }
                                     Tab::Location => changed |= location_page(ui, config, &mut buf),
                                     Tab::Sound => changed |= sound_page(ui, config, sound),
                                     Tab::Behavior => {
@@ -518,7 +538,12 @@ fn connection_page(ui: &mut Ui, config: &mut Config, buf: &mut Buffers, link: Li
     changed
 }
 
-fn display_page(ui: &mut Ui, config: &mut Config) -> bool {
+fn display_page(
+    ui: &mut Ui,
+    config: &mut Config,
+    graphics: GraphicsView<'_>,
+    restart: &mut bool,
+) -> bool {
     let mut changed = false;
 
     section(ui, "予想震度パネル", "", |rows| {
@@ -565,6 +590,79 @@ fn display_page(ui: &mut Ui, config: &mut Config) -> bool {
             "オンにすると、情報パネルの帯に「訓練」「試験」と出ます。",
             &mut config.show_training,
         );
+    });
+
+    if crate::graphics::SELECTABLE {
+        changed |= graphics_section(ui, config, graphics, restart);
+    }
+    changed
+}
+
+/// 描画方式 (Windows のみ)。変えたら再起動で効く。
+fn graphics_section(
+    ui: &mut Ui,
+    config: &mut Config,
+    view: GraphicsView<'_>,
+    restart: &mut bool,
+) -> bool {
+    let mut changed = false;
+    let g = &mut config.graphics;
+    let caption = if view.active.is_empty() {
+        String::new()
+    } else {
+        format!("いまの描画: {}", view.active)
+    };
+    section(ui, "描画", &caption, |rows| {
+        let disabled: &[GraphicsBackend] = if view.dx12_available {
+            &[]
+        } else {
+            &[GraphicsBackend::Dx12]
+        };
+        let desc = match (g.backend, view.dx12_available) {
+            (_, false) => "この PC の GPU は DirectX 12 に対応していないため、Vulkan を使います。",
+            (GraphicsBackend::Vulkan, true) => "従来の描画方式です。",
+            (GraphicsBackend::Dx12, true) => {
+                "メモリの使用量が少なくなります。起動できなかったときは、自動で Vulkan に戻します。"
+            }
+        };
+        if rows.segmented_row(
+            "描画方式",
+            desc,
+            &mut g.backend,
+            &[
+                (GraphicsBackend::Vulkan, "Vulkan"),
+                (GraphicsBackend::Dx12, "DirectX 12"),
+            ],
+            disabled,
+        ) {
+            // 選び直したら、前回の失敗の知らせは消す
+            g.dx12_failed = false;
+            changed = true;
+        }
+        if g.dx12_failed {
+            rows.message_row(
+                "graphics_failed",
+                Icon::TriangleAlert,
+                theme::FORECAST,
+                theme::TEXT,
+                "DirectX 12 で起動できなかったため、Vulkan に戻しました。",
+                0.0,
+                |_| {},
+            );
+        }
+        if g.backend != view.launched {
+            rows.status_row(
+                Icon::RotateCw,
+                theme::TEXT_MUTED,
+                "再起動すると切り替わります。",
+                110.0,
+                |ui| {
+                    if ui.add(icon_text_button(Icon::RotateCw, "再起動")).clicked() {
+                        *restart = true;
+                    }
+                },
+            );
+        }
     });
     changed
 }
