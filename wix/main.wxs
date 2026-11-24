@@ -47,7 +47,7 @@
     </StandardDirectory>
 
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
-      <Component Id="MainExecutable" Guid="*">
+      <Component Id="MainExecutable" Guid="5E0B7C1A-3D42-4F6B-9A58-2C7E1D4B8F93">
         <File Id="RSQuakeExe" Source="$(ExePath)" Name="RSQuake.exe" />
         <!-- ユーザー単位のインストールでは、KeyPath はファイルではなく HKCU のレジストリ値にする (ICE38) -->
         <RegistryValue Root="HKCU" Key="Software\RSQuake" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
