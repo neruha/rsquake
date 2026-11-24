@@ -11,7 +11,7 @@ use lucide_icons::Icon;
 use semver::Version;
 
 use crate::ui::theme;
-use crate::update::{Countdown, Notice, release_url};
+use crate::update::{Countdown, Notice, RELEASES_PAGE, release_url};
 
 const WIDTH: f32 = 340.0;
 /// 地図の隅からの距離
@@ -25,6 +25,8 @@ pub enum PopupAction {
     None,
     /// ブラウザで開く
     Open(String),
+    /// アプリ内で更新する (ダウンロードを始める)
+    Install,
     /// この版の通知をスキップする
     Skip(Version),
     Close,
@@ -33,14 +35,17 @@ pub enum PopupAction {
 pub struct UpdatePopup {
     notice: Notice,
     current: Version,
+    /// アプリ内で更新できる (「更新する」ボタンを出す)
+    installable: bool,
     countdown: Countdown,
 }
 
 impl UpdatePopup {
-    pub fn new(notice: Notice, current: Version) -> Self {
+    pub fn new(notice: Notice, current: Version, installable: bool) -> Self {
         Self {
             notice,
             current,
+            installable,
             countdown: Countdown::default(),
         }
     }
@@ -50,10 +55,17 @@ impl UpdatePopup {
             Notice::Update(r) => (
                 Icon::Download,
                 "新しいバージョンがあります".to_string(),
-                format!(
-                    "RSQuake v{} が公開されています (現在 v{})。ダウンロードとリリースノートは GitHub にあります。",
-                    r.version, self.current
-                ),
+                if self.installable {
+                    format!(
+                        "RSQuake v{} が公開されています (現在 v{})。ダウンロードして、そのまま更新できます。",
+                        r.version, self.current
+                    )
+                } else {
+                    format!(
+                        "RSQuake v{} が公開されています (現在 v{})。ダウンロードとリリースノートは GitHub にあります。",
+                        r.version, self.current
+                    )
+                },
                 "GitHub で開く",
                 r.url.clone(),
                 Some(r.version.clone()),
@@ -66,7 +78,18 @@ impl UpdatePopup {
                 release_url(v),
                 None,
             ),
+            Notice::UpdateFailed(why) => (
+                Icon::TriangleAlert,
+                "更新できませんでした".to_string(),
+                format!(
+                    "{why} 元のバージョンのまま起動しました。手動で更新するときは GitHub から入手できます。"
+                ),
+                "GitHub で開く",
+                RELEASES_PAGE.to_string(),
+                None,
+            ),
         };
+        let install = self.installable && matches!(self.notice, Notice::Update(_));
 
         let mut action = PopupAction::None;
         let resp = Area::new(Id::unique("update_popup"))
@@ -113,6 +136,16 @@ impl UpdatePopup {
                         );
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
+                            if install {
+                                let go = Button::new((
+                                    RichText::new(Icon::Download.unicode())
+                                        .font(theme::icon_font(14.0)),
+                                    RichText::new("更新する").size(13.0),
+                                ));
+                                if ui.add(go).clicked() {
+                                    action = PopupAction::Install;
+                                }
+                            }
                             let open = Button::new((
                                 RichText::new(Icon::ExternalLink.unicode())
                                     .font(theme::icon_font(14.0)),

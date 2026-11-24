@@ -29,6 +29,7 @@ use crate::ui::settings::{LinkInfo, SettingsWindow, UpdateView};
 use crate::ui::status::{KmoniStatus, Status};
 use crate::ui::update_popup::{PopupAction, UpdatePopup};
 use crate::ui::{arrival_panel, info_panel, intensity_panel, status, theme};
+use crate::update::download::Staged;
 use crate::update::{self, CheckOptions, Phase, UpdateEvent, UpdateInfo};
 
 /// この間、新しい画像が取れなければ、時刻を赤にして古い画像であることを示す。
@@ -109,6 +110,16 @@ struct Updater {
     /// 起動時の通知をまだ決めていない。確認の結果 (または失敗) が届いたときに決める
     notice_pending: bool,
     popup: Option<UpdatePopup>,
+    /// 確認まで済んだ配布物 (`Install::Ready` / `WaitingForEew` のとき)
+    staged: Option<Staged>,
+    /// 適用を頼まれている (EEW が終わったら適用する)
+    apply_requested: bool,
+    /// 前回のアプリ内の更新が失敗していたときの理由 (起動時の通知で 1 回だけ出す)
+    last_failure: Option<String>,
+    /// 適用役を起動したので、終了する
+    quit: bool,
+    /// 前回の更新が失敗したので、この起動では自動で適用しない
+    auto_blocked: bool,
 }
 
 impl EewApp {
@@ -134,7 +145,16 @@ impl EewApp {
             info: UpdateInfo::default(),
             notice_pending: update_enabled,
             popup: None,
+            staged: None,
+            apply_requested: false,
+            last_failure: None,
+            quit: false,
+            auto_blocked: false,
         };
+        if update_enabled {
+            update.last_failure = update::apply::startup().failure;
+            update.auto_blocked = update.last_failure.is_some();
+        }
         if update_enabled && config.update.check {
             update.start_check(&config, &cc.egui_ctx);
         }
@@ -237,43 +257,45 @@ impl EewApp {
                     self.store.remove_where(scenario::is_debug_id);
                 }
                 DebugAction::Popup(notice) => {
-                    self.update.popup = Some(UpdatePopup::new(notice, self.update.current.clone()));
+                    self.update.show_popup(notice);
                 }
                 DebugAction::ClosePopup => self.update.popup = None,
+                DebugAction::FakeInstall(state) => self.update.info.install = state,
             }
         }
     }
 
-    /// 更新の確認の結果を受け取り、起動時の通知を出すか決める。
+    /// 更新の確認・ダウンロードの結果を受け取り、通知を出すか、適用するかを決める。
     /// 通知は EEW が出ている間は出さず、出ている通知は EEW が出たらすぐ閉じる。
-    fn update_step(&mut self, eew_active: bool) {
+    /// 適用 (再起動) は、EEW が出ている間はしない。
+    fn update_step(&mut self, ctx: &egui::Context, eew_active: bool) {
         while let Ok(ev) = self.update.rx.try_recv() {
             match ev {
-                UpdateEvent::Checked(r) => {
-                    self.update.info = UpdateInfo {
-                        phase: Phase::Done,
-                        result: r,
-                    };
-                }
+                UpdateEvent::Checked(r) => self.update.on_checked(r),
                 UpdateEvent::Failed(why) => {
                     tracing::info!("更新を確認できない: {why}");
                     self.update.info.phase = Phase::Failed;
                 }
+                UpdateEvent::Download(ev) => self.update.on_download(ev),
             }
         }
         if eew_active {
             self.update.popup = None;
         }
+        self.update.advance(&self.config, ctx, eew_active);
+
         // 起動時の通知: 確認が終わった (確認しないときは最初の 1 フレーム) ところで 1 回だけ決める
         if self.update.notice_pending && self.update.info.phase != Phase::Checking {
             self.update.notice_pending = false;
             let result =
                 (self.update.info.phase == Phase::Done).then_some(&self.update.info.result);
+            let failed = self.update.last_failure.take();
             let notice = update::choose_notice(
                 result,
                 &self.config.update,
                 &self.update.current,
                 eew_active,
+                failed.as_deref(),
             );
             if let Some(notice) = notice {
                 // 版が上がった案内は、出したときに見せた版として残す (出せなかったら次の起動でもう一度)
@@ -281,8 +303,11 @@ impl EewApp {
                     self.config.update.last_notes_version = Some(self.update.current.to_string());
                     self.save_config();
                 }
-                self.update.popup = Some(UpdatePopup::new(notice, self.update.current.clone()));
+                self.update.show_popup(notice);
             }
+        }
+        if self.update.quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -313,6 +338,127 @@ impl Updater {
         opts.current = self.current.clone();
         update::spawn(opts, self.tx.clone(), ctx.clone());
     }
+
+    fn show_popup(&mut self, notice: update::Notice) {
+        let installable = self.info.installable() && self.info.install.can_start();
+        self.popup = Some(UpdatePopup::new(notice, self.current.clone(), installable));
+    }
+
+    /// 確認の結果を受け取る。進行中のダウンロードや確認済みのファイルは、確認し直しても変えない。
+    fn on_checked(&mut self, result: update::CheckResult) {
+        self.info.phase = Phase::Done;
+        let busy = !self.info.install.can_start();
+        self.info.plan = result.latest.as_ref().map(update::asset::plan_current);
+        if !busy {
+            self.info.install = update::Install::None;
+        }
+        self.info.result = result;
+    }
+
+    /// 自動で適用してよい新しい版があるか。スキップした版は適用しない。
+    /// 前回の更新が失敗していたときは、その起動では自動で試さない (失敗をくり返さない)。
+    fn auto_target(&self, config: &Config) -> bool {
+        if !config.update.check || !config.update.auto_apply || self.auto_blocked {
+            return false;
+        }
+        let Some(Ok(plan)) = &self.info.plan else {
+            return false;
+        };
+        config.update.skipped_version.as_deref() != Some(&plan.version.to_string())
+    }
+
+    /// 「更新する」: ダウンロードして確認を始める。
+    fn start_download(&mut self, ctx: &egui::Context) {
+        if !self.info.install.can_start() {
+            return;
+        }
+        let Some(Ok(plan)) = self.info.plan.clone() else {
+            return;
+        };
+        self.info.install = update::Install::Downloading {
+            done: 0,
+            total: plan.asset.size,
+        };
+        update::download::spawn(plan, self.tx.clone(), ctx.clone());
+    }
+
+    fn on_download(&mut self, ev: update::download::DownloadEvent) {
+        use update::Install;
+        use update::download::DownloadEvent as D;
+        match ev {
+            D::Progress { done, total } => {
+                if matches!(self.info.install, Install::Downloading { .. }) {
+                    self.info.install = Install::Downloading { done, total };
+                }
+            }
+            D::Verifying => self.info.install = Install::Verifying,
+            D::Ready(staged) => {
+                self.staged = Some(*staged);
+                self.info.install = Install::Ready;
+            }
+            D::Failed(why) => {
+                tracing::warn!("更新のダウンロードに失敗: {why}");
+                self.staged = None;
+                self.apply_requested = false;
+                self.info.install = Install::Failed(why);
+            }
+        }
+    }
+
+    /// 毎フレーム: 適用を頼まれていて、確認も済んでいて、EEW が出ていなければ、適用役を起動する。
+    fn advance(&mut self, config: &Config, ctx: &egui::Context, eew_active: bool) {
+        use update::Install;
+        // 自動で適用する設定なら、見つかった版のダウンロードを始める (設定を後からオンにしたときも)。
+        // 始めるのは `None` のときだけで、失敗した (`Failed`) あとは自動でやり直さない。
+        if self.enabled
+            && self.info.install == Install::None
+            && self.info.phase == Phase::Done
+            && self.auto_target(config)
+        {
+            self.start_download(ctx);
+            self.apply_requested = true;
+        }
+        if !self.apply_requested {
+            return;
+        }
+        match self.info.install {
+            Install::Ready | Install::WaitingForEew => {
+                if eew_active {
+                    self.info.install = Install::WaitingForEew;
+                    return;
+                }
+                self.apply(ctx);
+            }
+            _ => {}
+        }
+    }
+
+    /// 適用役を起動して、終了を頼む。
+    fn apply(&mut self, ctx: &egui::Context) {
+        use update::Install;
+        let Some(staged) = self.staged.clone() else {
+            return;
+        };
+        self.apply_requested = false;
+        self.info.install = Install::Applying;
+        match update::apply::start(&staged) {
+            Ok(()) => {
+                self.quit = true;
+                ctx.request_repaint();
+            }
+            Err(e) => {
+                tracing::warn!("更新を適用できない: {e:#}");
+                self.info.install = Install::Failed(format!("{e:#}"));
+            }
+        }
+    }
+
+    /// 「再起動して更新」が押された。EEW が出ていれば、終わるまで待つ。
+    fn request_apply(&mut self) {
+        if matches!(self.info.install, update::Install::Ready) {
+            self.apply_requested = true;
+        }
+    }
 }
 
 impl eframe::App for EewApp {
@@ -320,7 +466,7 @@ impl eframe::App for EewApp {
         self.drain();
         let now = self.now();
         let eew_now = self.store.active(now).iter().any(|e| !e.is_canceled());
-        self.update_step(eew_now);
+        self.update_step(ui.ctx(), eew_now);
         let active = self.store.active(now);
         // 右のパネルに出す 1 イベント。一定間隔で切り替える
         let interval = switch_interval(self.config.eew.switch_interval_secs);
@@ -421,6 +567,11 @@ impl eframe::App for EewApp {
                     }
                     self.update.popup = None;
                 }
+                PopupAction::Install => {
+                    self.update.start_download(ui.ctx());
+                    self.update.apply_requested = true;
+                    self.update.popup = None;
+                }
                 PopupAction::Skip(version) => {
                     self.config.update.skipped_version = Some(version.to_string());
                     self.save_config();
@@ -458,6 +609,7 @@ impl eframe::App for EewApp {
             info: &self.update.info,
             current: &self.update.current,
         };
+
         let settings_changed = self.settings.show(
             ui.ctx(),
             &mut self.config,
@@ -465,6 +617,15 @@ impl eframe::App for EewApp {
             link,
             update_view,
         );
+        if std::mem::take(&mut self.settings.request_install) {
+            self.update.start_download(ui.ctx());
+            // 設定画面からは、確認まで済んだところで止めて「再起動して更新」を待つ
+            // (自動で適用する設定のときは、確認が済んだらそのまま適用する)
+            self.update.apply_requested = self.config.update.auto_apply;
+        }
+        if std::mem::take(&mut self.settings.request_apply) {
+            self.update.request_apply();
+        }
         if std::mem::take(&mut self.settings.request_check)
             && self.update.enabled
             && self.update.info.phase != Phase::Checking

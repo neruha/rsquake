@@ -10,7 +10,7 @@ use semver::Version;
 
 use super::scenario::{self, ID_PREFIX, PRESETS, Params};
 use crate::eew::report::{EewReport, TelegramStatus};
-use crate::update::{self, Notice, Release};
+use crate::update::{self, Install, Notice, Release};
 
 /// コナミコマンド。
 const KONAMI: [Key; 10] = [
@@ -59,6 +59,8 @@ pub enum DebugAction {
     /// 更新などのポップアップを出す
     Popup(Notice),
     ClosePopup,
+    /// 設定画面の更新の状態を、見た目の確認用に差し替える (実際のダウンロードはしない)
+    FakeInstall(Install),
 }
 
 pub struct DebugMenu {
@@ -176,6 +178,7 @@ impl DebugMenu {
                 actions.push(DebugAction::Popup(Notice::Update(Release {
                     version: v.clone(),
                     url: update::release_url(v),
+                    assets: Vec::new(),
                 })));
             }
             if ui
@@ -189,7 +192,39 @@ impl DebugMenu {
                 actions.push(DebugAction::ClosePopup);
             }
         });
+        if ui.button("更新に失敗した案内").clicked() {
+            actions.push(DebugAction::Popup(Notice::UpdateFailed(
+                "インストーラーが失敗しました (終了コード 1603)。".into(),
+            )));
+        }
         ui.weak("EEW が表示されている間、ポップアップはすぐ閉じられます。");
+        ui.add_space(6.0);
+        ui.label("設定画面の更新の状態 (新しい版が見つかっているとき)");
+        ui.horizontal_wrapped(|ui| {
+            let states = [
+                (
+                    "ダウンロード中",
+                    Install::Downloading {
+                        done: 12 << 20,
+                        total: 30 << 20,
+                    },
+                ),
+                ("確認中", Install::Verifying),
+                ("再起動待ち", Install::Ready),
+                ("EEW 待ち", Install::WaitingForEew),
+                ("適用中", Install::Applying),
+                (
+                    "失敗",
+                    Install::Failed("ハッシュが SHA256SUMS と合いません".into()),
+                ),
+                ("なし", Install::None),
+            ];
+            for (label, state) in states {
+                if ui.button(label).clicked() {
+                    actions.push(DebugAction::FakeInstall(state));
+                }
+            }
+        });
     }
 
     fn eew_section(&mut self, ui: &mut Ui, now: DateTime<Utc>, actions: &mut Vec<DebugAction>) {
