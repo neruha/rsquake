@@ -27,12 +27,20 @@
 
 Windows (x64) インストーラーを実行する際に「VCRUNTIME140.dllが見つかりません」と表示された場合は、[**Microsoft Visual C++ 再頒布可能パッケージ**](https://learn.microsoft.com/ja-jp/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version)をインストールしてください。
 
-Linux の配布物は、展開した `rsquake` をそのまま実行します。Ubuntu 22.04 相当以降の glibc と、ALSA (`libasound2`)、Vulkan に対応したグラフィックスドライバが必要です。メニューに出したいときは、同梱の `rsquake.desktop` の `Exec` を `rsquake` の置き場所に書き換えて、`~/.local/share/applications` に置いてください。
+Linux には、Ubuntu 22.04 相当以降の glibc と、ALSA (`libasound2`)、Vulkan に対応したグラフィックスドライバが必要です。
+
+展開して `install.sh` を実行すると、管理者権限なしで `~/.local` に入り、GNOME や KDE のアプリ一覧に「RSQuake」が出ます。
 
 ```bash
 tar xzf RSQuake-<バージョン>-linux-x86_64.tar.gz
-./RSQuake-<バージョン>-linux-x86_64/rsquake
+cd RSQuake-<バージョン>-linux-x86_64
+./install.sh
 ```
+
+- 実行ファイルは `~/.local/bin/rsquake`、アイコンは `~/.local/share/rsquake/`、ランチャーは `~/.local/share/applications/rsquake.desktop` に入ります。`PREFIX=/opt/rsquake ./install.sh` のように、`~/.local` 以外へ入れることもできます
+- アプリ一覧に出ないときは、いちどログインし直してください
+- 消すときは、同じフォルダの `./uninstall.sh` を実行します (設定ファイルは残ります)
+- インストールせず、展開した `rsquake` をそのまま実行することもできます
 
 Windows と macOS の配布物には正式な署名がありません。起動時に警告が出たときは、次のように起動してください。
 

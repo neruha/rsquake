@@ -36,20 +36,9 @@ mkdir -p "$STAGE"
 install -m 755 "target/$TARGET/release/rsquake" "$STAGE/rsquake"
 install -m 644 assets/icon/icon.png "$STAGE/rsquake.png"
 install -m 644 LICENSE "$STAGE/LICENSE"
-
-# メニューに出すためのランチャー。使うときは Exec を rsquake の置き場所に書き換えて、
-# ~/.local/share/applications に置く。
-cat > "$STAGE/rsquake.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=RSQuake
-Comment=Earthquake early warning viewer
-Exec=rsquake
-Icon=rsquake
-Terminal=false
-Categories=Utility;
-StartupWMClass=rsquake
-EOF
+# アプリ一覧への登録 (.desktop の作成) は install.sh がやる
+install -m 755 scripts/linux/install.sh "$STAGE/install.sh"
+install -m 755 scripts/linux/uninstall.sh "$STAGE/uninstall.sh"
 
 TARBALL="dist/$NAME.tar.gz"
 rm -f "$TARBALL"
