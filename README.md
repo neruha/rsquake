@@ -22,8 +22,17 @@
 | Windows (x64) ポータブル | `RSQuake-<バージョン>-windows-x64.zip` |
 | macOS (Apple Silicon) | `RSQuake-<バージョン>-macos-arm64.dmg` |
 | macOS (Intel) | `RSQuake-<バージョン>-macos-x86_64.dmg` |
+| Linux (x86_64) | `RSQuake-<バージョン>-linux-x86_64.tar.gz` |
+| Linux (aarch64 / ARM64) | `RSQuake-<バージョン>-linux-aarch64.tar.gz` |
 
 Windows (x64) インストーラーを実行する際に「VCRUNTIME140.dllが見つかりません」と表示された場合は、[**Microsoft Visual C++ 再頒布可能パッケージ**](https://learn.microsoft.com/ja-jp/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version)をインストールしてください。
+
+Linux の配布物は、展開した `rsquake` をそのまま実行します。Ubuntu 22.04 相当以降の glibc と、ALSA (`libasound2`)、Vulkan に対応したグラフィックスドライバが必要です。メニューに出したいときは、同梱の `rsquake.desktop` の `Exec` を `rsquake` の置き場所に書き換えて、`~/.local/share/applications` に置いてください。
+
+```bash
+tar xzf RSQuake-<バージョン>-linux-x86_64.tar.gz
+./RSQuake-<バージョン>-linux-x86_64/rsquake
+```
 
 Windows と macOS の配布物には正式な署名がありません。起動時に警告が出たときは、次のように起動してください。
 
@@ -58,6 +67,7 @@ Windows と macOS の配布物には正式な署名がありません。起動�
 |---|---|
 | Windows | `%APPDATA%\rsquake\config.toml` |
 | macOS | `~/Library/Application Support/rsquake/config.toml` |
+| Linux | `~/.config/rsquake/config.toml` (`$XDG_CONFIG_HOME` があればその下) |
 
 ### アプリ内の更新
 
@@ -68,6 +78,8 @@ Windows と macOS の配布物には正式な署名がありません。起動�
 - Windows で、古いインストーラーで `Program Files` に入れた版を使っているとき。いちどアンインストールして、新しいインストーラーで入れ直してください。入れ直したあとは、更新で管理者権限を求められません(インストール先は `%LOCALAPPDATA%\Programs\RSQuake` になります)
 - macOS で、ディスクイメージの中から直接起動しているとき、または macOS が一時的な場所から起動しているとき。アプリを「アプリケーション」フォルダなどへ移してから起動してください
 - アプリのあるフォルダに書き込めないとき
+
+Linux ではアプリ内の更新に対応していません。新しい版は Release のページから入れ替えてください。また、トレイへの常駐と描画方式の選択も使えません (閉じると終了します)。
 
 ### 受信元
 
@@ -94,6 +106,14 @@ powershell -File scripts/package-windows.ps1
 # macOS (arm64 と x86_64 を別々の .dmg にします)
 bash scripts/package-macos.sh both
 ```
+
+```bash
+# Linux (動いているマシンの arch 向けに .tar.gz を作ります。x86_64 / aarch64 を指定することもできます)
+# ビルドには build-essential pkg-config libasound2-dev (Debian / Ubuntu) が必要です
+bash scripts/package-linux.sh
+```
+
+GitHub Actions のリリースでは、macOS と Linux を arch ごとのランナー (aarch64 / x86_64) でビルドし、別々のファイルにします。
 
 ### リリース (開発者向け)
 
