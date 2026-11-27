@@ -102,8 +102,8 @@ pub fn seed_bold_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("seed-bold".into()))
 }
 
-pub fn seed_regular_font(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name("seed-regular".into()))
+pub fn mplus_regular_font(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("mplus-regular".into()))
 }
 
 pub fn mplus_light_font(size: f32) -> FontId {
@@ -146,13 +146,13 @@ pub fn install(ctx: &egui::Context) {
     );
     add(
         &mut fonts,
-        "seed-regular",
-        include_bytes!("../../assets/fonts/LINESeedJP-Regular.ttf"),
+        "mplus-light",
+        include_bytes!("../../assets/fonts/MPLUS1p-Light.ttf"),
     );
     add(
         &mut fonts,
-        "mplus-light",
-        include_bytes!("../../assets/fonts/MPLUS1p-Light.ttf"),
+        "mplus-regular",
+        include_bytes!("../../assets/fonts/MPLUS1p-Regular.ttf"),
     );
     add(
         &mut fonts,
@@ -196,12 +196,12 @@ pub fn install(ctx: &egui::Context) {
         .families
         .insert(FontFamily::Name("seed-bold".into()), with_jp("seed-bold"));
     fonts.families.insert(
-        FontFamily::Name("seed-regular".into()),
-        with_jp("seed-regular"),
-    );
-    fonts.families.insert(
         FontFamily::Name("mplus-light".into()),
         with_jp("mplus-light"),
+    );
+    fonts.families.insert(
+        FontFamily::Name("mplus-regular".into()),
+        with_jp("mplus-regular"),
     );
     fonts.families.insert(
         FontFamily::Name("mplus-medium".into()),

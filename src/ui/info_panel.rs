@@ -49,7 +49,7 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
             card.center(),
             Align2::CENTER_CENTER,
             "緊急地震速報は発表されていません",
-            theme::seed_regular_font(20.0 * s),
+            theme::mplus_regular_font(20.0 * s),
             theme::TEXT_MUTED,
         );
         return;
@@ -128,7 +128,7 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
     };
     let total = measure(&q.name, theme::seed_bold_font(name_size))
         + 12.0 * s
-        + measure(suffix, theme::seed_regular_font(name_size * 0.5));
+        + measure(suffix, theme::mplus_regular_font(name_size * 0.5));
     if total > max_w {
         name_size *= max_w / total;
     }
@@ -143,7 +143,7 @@ pub fn show(ui: &Ui, rect: Rect, event: Option<&EewEvent>, position: Option<(usi
         pos2(name_rect.max.x + 12.0 * s, name_rect.max.y - 4.0 * s),
         Align2::LEFT_BOTTOM,
         suffix,
-        theme::seed_regular_font(name_size * 0.5),
+        theme::mplus_regular_font(name_size * 0.5),
         Color32::WHITE,
     );
 
@@ -261,7 +261,7 @@ fn value_block(painter: &Painter, pos: Pos2, title: &str, value: &str, max_w: f3
         pos,
         Align2::LEFT_CENTER,
         title,
-        theme::seed_regular_font(20.0 * s),
+        theme::mplus_regular_font(20.0 * s),
         TEXT_SOFT,
     );
     let mut size = 54.0 * s;
