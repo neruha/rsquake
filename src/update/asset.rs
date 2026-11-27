@@ -146,6 +146,11 @@ pub fn detect(env: &Env) -> Result<Target, String> {
 
 fn detect_windows(env: &Env) -> Result<Target, String> {
     let exe = env.exe.clone();
+    if is_zip_preview_path(&exe) {
+        return Err("zip の中から起動しています。\
+            zip を右クリックして「すべて展開」したあと、展開したフォルダの RSQuake.exe を起動してください。"
+            .into());
+    }
     if env
         .program_files
         .iter()
@@ -163,6 +168,23 @@ fn detect_windows(env: &Env) -> Result<Target, String> {
         Target::WindowsInstaller { exe }
     } else {
         Target::WindowsPortable { exe }
+    })
+}
+
+/// エクスプローラーで zip を開いたまま起動したときの一時展開先か。
+/// 場所は `%TEMP%\Temp<N>_<zip の名前>.zip\...` で、アプリが終わると消えることがあるため、
+/// 入れ替えも再起動もできない。
+fn is_zip_preview_path(exe: &Path) -> bool {
+    exe.components().any(|c| {
+        let name = c.as_os_str().to_string_lossy().to_ascii_lowercase();
+        let Some(rest) = name.strip_prefix("temp") else {
+            return false;
+        };
+        name.ends_with(".zip")
+            && rest
+                .split('_')
+                .next()
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
     })
 }
 
@@ -329,6 +351,20 @@ mod tests {
         assert!(detect(&e).unwrap_err().contains("アンインストール"));
         // Program Files の下でも、RSQuake 以外のフォルダは古いインストーラー版ではない
         let e = env(Os::Windows, "/Program Files/Other/RSQuake.exe");
+        assert!(matches!(detect(&e), Ok(Target::WindowsPortable { .. })));
+    }
+
+    #[test]
+    fn running_from_inside_a_zip_is_refused() {
+        let e = env(
+            Os::Windows,
+            "/Users/u/AppData/Local/Temp/Temp2_RSQuake-0.2.0-windows-x64.zip/RSQuake-0.2.0-windows-x64/RSQuake.exe",
+        );
+        assert!(detect(&e).unwrap_err().contains("zip"));
+        // 名前が似ているだけの通常のフォルダは対象外
+        let e = env(Os::Windows, "/Users/u/Downloads/Temp_files/RSQuake.exe");
+        assert!(matches!(detect(&e), Ok(Target::WindowsPortable { .. })));
+        let e = env(Os::Windows, "/Users/u/Downloads/Temp2_x/RSQuake.exe");
         assert!(matches!(detect(&e), Ok(Target::WindowsPortable { .. })));
     }
 

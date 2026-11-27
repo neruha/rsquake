@@ -223,7 +223,8 @@ pub fn extract_exe(zip_path: &Path, dest: &Path) -> anyhow::Result<()> {
         if !is_exe || entry.is_dir() {
             continue;
         }
-        let mut out = std::fs::File::create(dest)?;
+        let mut out = std::fs::File::create(dest)
+            .with_context(|| format!("{} を作れません", dest.display()))?;
         let n = std::io::copy(&mut std::io::Read::take(entry, LIMIT + 1), &mut out)?;
         if n == 0 || n > LIMIT {
             bail!("zip の中の RSQuake.exe の大きさがおかしいです");
@@ -375,11 +376,18 @@ fn remove_any(path: &Path) {
 /// `current` を `old` に、`new` を `current` に名前を変えて入れ替える。
 /// 2 つ目が失敗したら、`current` を元に戻す。
 pub fn swap(current: &Path, new: &Path, old: &Path) -> std::io::Result<()> {
+    // どの操作で、どのパスが失敗したか分かるようにする
+    let ctx = |op: &str, from: &Path, to: &Path, e: std::io::Error| {
+        std::io::Error::new(
+            e.kind(),
+            format!("{op} ({} -> {}): {e}", from.display(), to.display()),
+        )
+    };
     remove_any(old);
-    std::fs::rename(current, old)?;
+    std::fs::rename(current, old).map_err(|e| ctx("現在の版を .old へ", current, old, e))?;
     if let Err(e) = std::fs::rename(new, current) {
         let _ = std::fs::rename(old, current);
-        return Err(e);
+        return Err(ctx("新しい版を置く", new, current, e));
     }
     Ok(())
 }
@@ -478,6 +486,10 @@ pub fn startup() -> Startup {
             && !out.ok
         {
             s.failure = Some(out.message);
+            // 調査用に、作業フォルダを消す前に適用役のログを残す
+            if let Some(parent) = dir.parent() {
+                let _ = std::fs::copy(dir.join(LOG_FILE), parent.join("apply-failed.log"));
+            }
         }
         // 成功でも失敗でも、結果を読んだら作業フォルダは要らない
         let _ = std::fs::remove_dir_all(&dir);
