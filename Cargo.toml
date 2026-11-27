@@ -29,8 +29,10 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 # tokio-tungstenite の wss 用。暗号プロバイダを自分で選ぶ必要がある (net::ws で install する)
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "mp3"] }
-# 更新の署名 (minisign) の確認と、配布物の SHA-256、ポータブル版の zip の展開
+# 更新の署名 (minisign) の確認と、配布物の SHA-256、ポータブル版の zip と Linux 版の tar.gz の展開
 minisign-verify = "0.3.0"
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+tar = { version = "0.4", default-features = false }
 # 起動の前に DirectX 12 の GPU を探す (graphics::dx12_available)。wgpu の非同期 API を待つだけ
 pollster = "1.0.1"
 semver = "1"

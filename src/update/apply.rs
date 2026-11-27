@@ -185,6 +185,7 @@ fn apply(job: &Job, log: &dyn Fn(&str)) -> Result<(), String> {
         Target::WindowsInstaller { .. } => apply_msi(&job.file, log),
         Target::WindowsPortable { exe } => apply_portable(&job.file, exe, log),
         Target::MacApp { app } => apply_mac(&job.file, app, log),
+        Target::LinuxBinary { exe } => apply_linux(&job.file, exe, log),
     };
     r.map_err(|e| format!("{e:#}"))
 }
@@ -242,6 +243,67 @@ fn apply_portable(zip: &Path, exe: &Path, log: &dyn Fn(&str)) -> anyhow::Result<
     log(&format!("{} を取り出しました", new.display()));
     // 実行中のファイルは消せないが、名前は変えられる
     if let Err(e) = retry(10, Duration::from_millis(300), || swap(exe, &new, &old)) {
+        let _ = std::fs::remove_file(&new);
+        return Err(anyhow!("入れ替えられません: {e}"));
+    }
+    Ok(())
+}
+
+// ---- Linux ----
+
+/// tar.gz の中から実行ファイル `rsquake` を取り出して `dest` に書き、実行権限を付ける。
+pub fn extract_linux_binary(tarball: &Path, dest: &Path) -> anyhow::Result<()> {
+    const LIMIT: u64 = 400 * 1024 * 1024;
+    let gz = flate2::read::GzDecoder::new(std::fs::File::open(tarball)?);
+    let mut archive = tar::Archive::new(gz);
+    for entry in archive.entries()? {
+        let entry = entry?;
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+        let is_bin = entry
+            .path()
+            .ok()
+            .and_then(|p| p.file_name().map(|f| f == "rsquake"))
+            .unwrap_or(false);
+        if !is_bin {
+            continue;
+        }
+        let mut out = std::fs::File::create(dest)
+            .with_context(|| format!("{} を作れません", dest.display()))?;
+        let n = std::io::copy(&mut std::io::Read::take(entry, LIMIT + 1), &mut out)?;
+        if n == 0 || n > LIMIT {
+            bail!("tar.gz の中の rsquake の大きさがおかしいです");
+        }
+        out.sync_all()?;
+        drop(out);
+        // 実行ファイル (ELF) でないものは置かない
+        let mut magic = [0u8; 4];
+        std::io::Read::read_exact(&mut std::fs::File::open(dest)?, &mut magic)?;
+        if &magic != b"\x7fELF" {
+            let _ = std::fs::remove_file(dest);
+            bail!("tar.gz の中の rsquake が実行ファイルではありません");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))?;
+        }
+        return Ok(());
+    }
+    bail!("tar.gz に rsquake がありません")
+}
+
+fn apply_linux(tarball: &Path, exe: &Path, log: &dyn Fn(&str)) -> anyhow::Result<()> {
+    let new = sibling(exe, "", ".new");
+    let old = sibling(exe, "", ".old");
+    if let Err(e) = extract_linux_binary(tarball, &new) {
+        let _ = std::fs::remove_file(&new);
+        return Err(e);
+    }
+    log(&format!("{} を取り出しました", new.display()));
+    // 実行中のファイルでも、名前の変更なら置き換えられる
+    if let Err(e) = swap(exe, &new, &old) {
         let _ = std::fs::remove_file(&new);
         return Err(anyhow!("入れ替えられません: {e}"));
     }
@@ -511,7 +573,7 @@ fn read_outcome(dir: &Path) -> Option<Outcome> {
 pub fn cleanup_old(target: &Target) {
     match target {
         Target::WindowsInstaller { .. } => {}
-        Target::WindowsPortable { exe } => {
+        Target::WindowsPortable { exe } | Target::LinuxBinary { exe } => {
             // 起動した直後は、適用役がまだ終わっていないことがあるので、少し待ちながら試す
             let old = sibling(exe, "", ".old");
             let new = sibling(exe, "", ".new");
@@ -737,5 +799,69 @@ mod tests {
             if n < 3 { Err("no") } else { Ok(7) }
         });
         assert_eq!(r, Ok(7));
+    }
+
+    fn make_tar_gz(dir: &Path, entries: &[(&str, &[u8])]) -> PathBuf {
+        let path = dir.join("t.tar.gz");
+        let gz = flate2::write::GzEncoder::new(
+            std::fs::File::create(&path).unwrap(),
+            flate2::Compression::fast(),
+        );
+        let mut b = tar::Builder::new(gz);
+        for (name, body) in entries {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(body.len() as u64);
+            h.set_mode(0o644);
+            h.set_cksum();
+            b.append_data(&mut h, name, *body).unwrap();
+        }
+        b.into_inner().unwrap().finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn linux_binary_is_extracted_and_made_executable() {
+        let d = tempfile::tempdir().unwrap();
+        let t = make_tar_gz(
+            d.path(),
+            &[
+                ("RSQuake-0.2.0-linux-x86_64/LICENSE", b"x"),
+                ("RSQuake-0.2.0-linux-x86_64/rsquake", b"\x7fELF-new"),
+            ],
+        );
+        let out = d.path().join("rsquake.new");
+        extract_linux_binary(&t, &out).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), b"\x7fELF-new");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o111, 0o111);
+        }
+    }
+
+    #[test]
+    fn linux_tarball_without_a_binary_or_with_a_non_elf_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let out = d.path().join("rsquake.new");
+        let t = make_tar_gz(d.path(), &[("a/other", b"x")]);
+        assert!(extract_linux_binary(&t, &out).is_err());
+        let t = make_tar_gz(d.path(), &[("a/rsquake", b"#!/bin/sh\n")]);
+        assert!(extract_linux_binary(&t, &out).is_err());
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn linux_update_swaps_the_binary_and_keeps_the_old_one() {
+        let d = tempfile::tempdir().unwrap();
+        let exe = d.path().join("rsquake");
+        std::fs::write(&exe, "old").unwrap();
+        let t = make_tar_gz(d.path(), &[("a/rsquake", b"\x7fELF-new")]);
+        apply_linux(&t, &exe, &|_| {}).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"\x7fELF-new");
+        assert_eq!(std::fs::read(d.path().join("rsquake.old")).unwrap(), b"old");
+
+        let bad = make_tar_gz(d.path(), &[("a/nothing", b"x")]);
+        assert!(apply_linux(&bad, &exe, &|_| {}).is_err());
+        assert_eq!(std::fs::read(&exe).unwrap(), b"\x7fELF-new");
     }
 }

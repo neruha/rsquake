@@ -56,6 +56,7 @@ pub struct Asset {
 pub enum Os {
     Windows,
     MacOs,
+    Linux,
     Other,
 }
 
@@ -85,6 +86,8 @@ impl Env {
             Os::Windows
         } else if cfg!(target_os = "macos") {
             Os::MacOs
+        } else if cfg!(target_os = "linux") {
+            Os::Linux
         } else {
             Os::Other
         };
@@ -118,13 +121,17 @@ pub enum Target {
     WindowsPortable { exe: PathBuf },
     /// macOS の `.app`
     MacApp { app: PathBuf },
+    /// Linux の実行ファイル (`install.sh` で入れた `~/.local/bin/rsquake` など)
+    LinuxBinary { exe: PathBuf },
 }
 
 impl Target {
-    /// 更新のあとに起動し直すもの (Windows は実行ファイル、macOS は `.app`)。
+    /// 更新のあとに起動し直すもの (Windows と Linux は実行ファイル、macOS は `.app`)。
     pub fn relaunch_path(&self) -> &Path {
         match self {
-            Self::WindowsInstaller { exe } | Self::WindowsPortable { exe } => exe,
+            Self::WindowsInstaller { exe }
+            | Self::WindowsPortable { exe }
+            | Self::LinuxBinary { exe } => exe,
             Self::MacApp { app } => app,
         }
     }
@@ -140,8 +147,31 @@ pub fn detect(env: &Env) -> Result<Target, String> {
     match env.os {
         Os::Windows => detect_windows(env),
         Os::MacOs => detect_mac(env),
+        Os::Linux => detect_linux(env),
         Os::Other => Err("この OS では、アプリ内の更新に対応していません。".into()),
     }
+}
+
+fn detect_linux(env: &Env) -> Result<Target, String> {
+    let exe = env.exe.clone();
+    // パッケージ管理 (apt / rpm など) が入れた場所は、管理者権限なしでは書けず、
+    // 書けても管理側と食い違うので、アプリ内では更新しない。
+    const MANAGED: [&str; 4] = ["/usr/bin", "/usr/sbin", "/usr/lib", "/usr/libexec"];
+    if MANAGED.iter().any(|d| exe.starts_with(d)) {
+        return Err("パッケージ管理が入れた場所から起動しています。\
+            パッケージ管理で更新するか、install.sh で入れ直してください。"
+            .into());
+    }
+    // cargo でビルドした開発用の実行ファイル (<リポジトリ>/target/<profile>/rsquake) は上書きしない
+    let in_cargo_target = exe
+        .ancestors()
+        .skip(1)
+        .filter(|p| p.file_name().is_some_and(|n| n == "target"))
+        .any(|p| p.parent().is_some_and(|r| r.join("Cargo.toml").is_file()));
+    if in_cargo_target {
+        return Err("開発用のビルドから起動しているため、入れ替えません。".into());
+    }
+    Ok(Target::LinuxBinary { exe })
 }
 
 fn detect_windows(env: &Env) -> Result<Target, String> {
@@ -225,6 +255,12 @@ pub fn asset_name(target: &Target, arch: Arch, version: &Version) -> Result<Stri
         }
         (Target::MacApp { .. }, Arch::Arm64) => Ok(format!("RSQuake-{version}-macos-arm64.dmg")),
         (Target::MacApp { .. }, Arch::X64) => Ok(format!("RSQuake-{version}-macos-x86_64.dmg")),
+        (Target::LinuxBinary { .. }, Arch::X64) => {
+            Ok(format!("RSQuake-{version}-linux-x86_64.tar.gz"))
+        }
+        (Target::LinuxBinary { .. }, Arch::Arm64) => {
+            Ok(format!("RSQuake-{version}-linux-aarch64.tar.gz"))
+        }
         _ => Err("この CPU 向けの配布物がありません。".into()),
     }
 }
@@ -433,6 +469,40 @@ mod tests {
             "RSQuake-0.2.0-beta.1-macos-x86_64.dmg"
         );
         assert!(asset_name(&port, Arch::Arm64, &ver).is_err());
+        let lin = Target::LinuxBinary { exe: "x".into() };
+        assert_eq!(
+            asset_name(&lin, Arch::X64, &ver).unwrap(),
+            "RSQuake-0.2.0-beta.1-linux-x86_64.tar.gz"
+        );
+        assert_eq!(
+            asset_name(&lin, Arch::Arm64, &ver).unwrap(),
+            "RSQuake-0.2.0-beta.1-linux-aarch64.tar.gz"
+        );
+        assert!(asset_name(&lin, Arch::Other, &ver).is_err());
+    }
+
+    #[test]
+    fn linux_user_installs_are_updatable_but_managed_and_dev_builds_are_not() {
+        let e = env(Os::Linux, "/home/u/.local/bin/rsquake");
+        assert_eq!(
+            detect(&e),
+            Ok(Target::LinuxBinary {
+                exe: PathBuf::from("/home/u/.local/bin/rsquake")
+            })
+        );
+        assert!(detect(&env(Os::Linux, "/opt/rsquake/bin/rsquake")).is_ok());
+        // パッケージ管理の場所は対象外
+        let e = env(Os::Linux, "/usr/bin/rsquake");
+        assert!(detect(&e).unwrap_err().contains("パッケージ管理"));
+        // 開発用のビルド (target の親に Cargo.toml がある) は上書きしない
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::write(repo.path().join("Cargo.toml"), "").unwrap();
+        let exe = repo.path().join("target/release/rsquake");
+        assert!(
+            detect(&env(Os::Linux, exe.to_str().unwrap()))
+                .unwrap_err()
+                .contains("開発用")
+        );
     }
 
     fn asset(name: &str) -> Asset {
