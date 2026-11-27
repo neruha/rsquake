@@ -44,9 +44,19 @@ pub fn show(ui: &mut Ui, rect: Rect, event: Option<&EewEvent>, mode: RegionDispl
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(&mut child, |ui| {
-            for (title, color, list) in [
-                ("緊急地震速報（警報）", theme::WARNING, &warnings),
-                ("緊急地震速報（予報）", theme::FORECAST, &forecasts),
+            for (title, color, text_color, list) in [
+                (
+                    "緊急地震速報（警報）",
+                    theme::WARNING,
+                    egui::Color32::WHITE,
+                    &warnings,
+                ),
+                (
+                    "緊急地震速報（予報）",
+                    theme::FORECAST,
+                    egui::Color32::BLACK,
+                    &forecasts,
+                ),
             ] {
                 if list.is_empty() {
                     continue;
@@ -59,12 +69,18 @@ pub fn show(ui: &mut Ui, rect: Rect, event: Option<&EewEvent>, mode: RegionDispl
                 let strip = Rect::from_min_size(group.min, vec2(4.0, h - 6.0));
                 p.rect_filled(strip, 2.0, color);
                 let x0 = group.min.x + 14.0;
-                p.text(
-                    pos2(x0, group.min.y + HEADER_H / 2.0),
-                    Align2::LEFT_CENTER,
-                    title,
-                    theme::bold_font(15.0),
-                    theme::TEXT,
+                // 種別は、左端の帯から続く色の座布団に載せる (角丸なし)
+                let galley =
+                    p.layout_no_wrap(title.to_string(), theme::bold_font(15.0), text_color);
+                let pill = Rect::from_min_size(
+                    group.min,
+                    vec2(14.0 + galley.size().x + 12.0, HEADER_H),
+                );
+                p.rect_filled(pill, 0.0, color);
+                p.galley(
+                    pos2(x0, pill.center().y - galley.size().y / 2.0),
+                    galley,
+                    text_color,
                 );
                 if has_lg {
                     p.text(
